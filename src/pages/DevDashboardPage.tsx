@@ -54,6 +54,12 @@ const DevDashboardPage = () => {
   const { toast } = useToast();
 
   useEffect(() => {
+    if (!authLoading && !user) {
+      navigate('/auth', { replace: true });
+    }
+  }, [authLoading, user, navigate]);
+
+  useEffect(() => {
     if (!user) {
       setProfileLoading(false);
       return;
@@ -252,7 +258,6 @@ const DevDashboardPage = () => {
   }
 
   if (!user) {
-    navigate('/auth', { replace: true });
     return null;
   }
 

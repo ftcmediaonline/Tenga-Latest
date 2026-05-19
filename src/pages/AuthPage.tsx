@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Mail, Lock, User, Eye, EyeOff, ArrowLeft } from 'lucide-react';
@@ -14,6 +14,38 @@ import Footer from '@/components/layout/Footer';
 import tengaLogo from '@/assets/tenga-logo.png';
 import tengaLogoWhite from '@/assets/tenga-logo-white.png';
 
+/** Must match Supabase → Authentication → URL Configuration → Redirect URLs */
+function getAuthRedirectUrl(): string {
+  const configured = import.meta.env.VITE_SITE_URL?.replace(/\/$/, '');
+  const isLocal =
+    window.location.hostname === 'localhost' ||
+    window.location.hostname === '127.0.0.1';
+  const base =
+    configured && isLocal
+      ? configured
+      : window.location.origin.replace(/\/$/, '');
+  return `${base}/auth`;
+}
+
+function hasEmailCallbackInUrl(): boolean {
+  const params = new URLSearchParams(window.location.search);
+  const hash = window.location.hash;
+  return (
+    params.has('code') ||
+    hash.includes('access_token') ||
+    params.get('type') === 'signup' ||
+    params.get('type') === 'email'
+  );
+}
+
+function signupErrorMessage(error: { message?: string; status?: number }): string {
+  const msg = (error.message ?? '').toLowerCase();
+  if (error.status === 422 && (msg.includes('redirect') || msg.includes('url'))) {
+    return `Redirect URL not allowed. Add this exact URL in Supabase → Authentication → URL Configuration: ${getAuthRedirectUrl()}`;
+  }
+  return error.message ?? 'Signup failed';
+}
+
 const AuthPage = () => {
   const navigate = useNavigate();
   const { toast } = useToast();
@@ -24,6 +56,52 @@ const AuthPage = () => {
 
   const [loginForm, setLoginForm] = useState({ email: '', password: '' });
   const [signupForm, setSignupForm] = useState({ fullName: '', email: '', password: '', confirmPassword: '' });
+  const [pendingVerificationEmail, setPendingVerificationEmail] = useState<string | null>(null);
+  const [resendingVerification, setResendingVerification] = useState(false);
+  const handlingEmailCallback = useRef(hasEmailCallbackInUrl());
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const authError = params.get('error_description') ?? params.get('error');
+    if (authError) {
+      toast({
+        title: 'Verification link invalid',
+        description: decodeURIComponent(authError.replace(/\+/g, ' ')),
+        variant: 'destructive',
+      });
+      window.history.replaceState({}, document.title, '/auth');
+      handlingEmailCallback.current = false;
+      return;
+    }
+
+    if (!handlingEmailCallback.current) return;
+
+    const completeVerification = () => {
+      if (!handlingEmailCallback.current) return;
+      handlingEmailCallback.current = false;
+      toast({ title: 'Email verified!', description: 'Welcome to Tenga. You are signed in.' });
+      window.history.replaceState({}, document.title, '/auth');
+      navigate('/');
+    };
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      if (
+        handlingEmailCallback.current &&
+        session &&
+        (event === 'SIGNED_IN' || event === 'INITIAL_SESSION')
+      ) {
+        completeVerification();
+      }
+    });
+
+    void supabase.auth.getSession().then(({ data: { session } }) => {
+      if (handlingEmailCallback.current && session) {
+        completeVerification();
+      }
+    });
+
+    return () => subscription.unsubscribe();
+  }, [navigate, toast]);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -60,19 +138,65 @@ const AuthPage = () => {
       return;
     }
     setLoading(true);
-    const { error } = await supabase.auth.signUp({
-      email: signupForm.email,
+    const email = signupForm.email.trim();
+    const { data, error } = await supabase.auth.signUp({
+      email,
       password: signupForm.password,
       options: {
         data: { full_name: signupForm.fullName },
-        emailRedirectTo: window.location.origin,
+        emailRedirectTo: getAuthRedirectUrl(),
       },
     });
     setLoading(false);
     if (error) {
-      toast({ title: 'Signup failed', description: error.message, variant: 'destructive' });
+      toast({ title: 'Signup failed', description: signupErrorMessage(error), variant: 'destructive' });
+      return;
+    }
+
+    if (data.session) {
+      toast({ title: 'Welcome to Tenga!', description: 'Your account is ready.' });
+      navigate('/');
+      return;
+    }
+
+    if (data.user?.identities?.length === 0) {
+      setPendingVerificationEmail(email);
+      toast({
+        title: 'Email already registered',
+        description: 'Sign in, or use “Resend verification email” if you have not confirmed yet.',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    setPendingVerificationEmail(email);
+    toast({
+      title: 'Account created',
+      description: 'Check your inbox (and spam) for a verification link from Tenga.',
+    });
+  };
+
+  const handleResendVerification = async () => {
+    const email = pendingVerificationEmail?.trim() || signupForm.email.trim();
+    if (!email) {
+      toast({ title: 'Enter your email first', variant: 'destructive' });
+      return;
+    }
+    setResendingVerification(true);
+    const { error } = await supabase.auth.resend({
+      type: 'signup',
+      email,
+      options: { emailRedirectTo: getAuthRedirectUrl() },
+    });
+    setResendingVerification(false);
+    if (error) {
+      toast({ title: 'Could not resend email', description: signupErrorMessage(error), variant: 'destructive' });
     } else {
-      toast({ title: 'Account created!', description: 'Please check your email to verify your account.' });
+      setPendingVerificationEmail(email);
+      toast({
+        title: 'Verification email sent',
+        description: `If ${email} is registered, you will receive a new link shortly.`,
+      });
     }
   };
 
@@ -228,6 +352,19 @@ const AuthPage = () => {
                     <Button type="submit" className="w-full" disabled={loading}>
                       {loading ? 'Creating account...' : 'Create Account'}
                     </Button>
+                    {(pendingVerificationEmail || signupForm.email) && (
+                      <p className="text-center text-sm text-muted-foreground">
+                        Didn&apos;t get the email?{' '}
+                        <button
+                          type="button"
+                          onClick={handleResendVerification}
+                          disabled={resendingVerification}
+                          className="text-primary hover:underline disabled:opacity-50"
+                        >
+                          {resendingVerification ? 'Sending…' : 'Resend verification email'}
+                        </button>
+                      </p>
+                    )}
                   </motion.form>
                 )}
               </AnimatePresence>

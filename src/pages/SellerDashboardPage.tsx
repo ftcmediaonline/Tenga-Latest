@@ -11,6 +11,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogHeader,
   DialogTitle,
   DialogTrigger,
@@ -96,6 +97,12 @@ const SellerDashboardPage = () => {
   const [promoAudience, setPromoAudience] = useState<string[]>(['followers']);
   const [promoSending, setPromoSending] = useState(false);
 
+  useEffect(() => {
+    if (!authLoading && !user) {
+      navigate('/auth', { replace: true });
+    }
+  }, [authLoading, user, navigate]);
+
   const handleMarkDelivered = async (orderId: string) => {
     setUpdatingOrderId(orderId);
     await supabase.from('orders').update({ status: 'delivered' }).eq('id', orderId);
@@ -162,8 +169,8 @@ const SellerDashboardPage = () => {
     }
     setPromoSending(true);
     try {
-      const { data, error } = await supabase.functions.invoke('send-promotional-email', {
-        body: { shop_id: shop.id, subject, body, audience: promoAudience },
+      const { data, error } = await supabase.functions.invoke('send-email', {
+        body: { action: 'promotional-email', shop_id: shop.id, subject, body, audience: promoAudience },
       });
       if (error) throw error;
       const sent = (data as { sent?: number })?.sent ?? 0;
@@ -479,7 +486,6 @@ const SellerDashboardPage = () => {
   }
 
   if (!user) {
-    navigate('/auth', { replace: true });
     return null;
   }
 
@@ -559,6 +565,9 @@ const SellerDashboardPage = () => {
                   <DialogContent>
                     <DialogHeader>
                       <DialogTitle>Add product</DialogTitle>
+                      <DialogDescription>
+                        Add a new product listing to your shop.
+                      </DialogDescription>
                     </DialogHeader>
                     <form onSubmit={handleAddProduct} className="space-y-4">
                       {addError && (
@@ -806,9 +815,9 @@ const SellerDashboardPage = () => {
                               <DialogContent className="sm:max-w-md">
                                 <DialogHeader>
                                   <DialogTitle>Mark order as shipped</DialogTitle>
-                                  <p className="text-sm text-muted-foreground">
+                                  <DialogDescription>
                                     Enter the carrier and tracking number. This will be visible to the customer and in the admin dashboard.
-                                  </p>
+                                  </DialogDescription>
                                 </DialogHeader>
                                 <form onSubmit={handleMarkShipped} className="space-y-4 mt-2">
                                   <div className="space-y-2">

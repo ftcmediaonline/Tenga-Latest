@@ -138,6 +138,22 @@ const CheckoutPage = () => {
             }
           }
         }
+
+        await supabase.functions.invoke('send-email', {
+          body: {
+            action: 'order-confirmation',
+            email: addr.email,
+            customerName: `${addr.firstName} ${addr.lastName}`.trim(),
+            orderNumber,
+            shippingMethod,
+            total: orderTotal,
+            items: items.map((i) => ({
+              name: i.product.name,
+              qty: i.quantity,
+              price: i.product.price,
+            })),
+          },
+        });
       } finally {
         setPlacing(false);
       }

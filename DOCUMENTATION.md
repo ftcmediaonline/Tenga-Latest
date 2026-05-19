@@ -80,7 +80,7 @@ shop-social/
 │   └── index.css           # Global + Tailwind
 ├── supabase/
 │   ├── migrations/         # SQL migrations (schema, RLS, seeds)
-│   ├── functions/          # Edge functions (e.g. delete-user)
+│   ├── functions/          # Edge functions (email, delete-user, …)
 │   └── config.toml         # Local Supabase config
 ├── index.html
 ├── package.json
@@ -245,7 +245,8 @@ Database tables (Supabase) include: `profiles`, `shops`, `products`, `product_im
   - Apply via **Supabase Dashboard → SQL Editor** (paste and run each migration), or  
   - Use **Supabase CLI:** `supabase link --project-ref YOUR_REF` then `supabase db push`.  
 - **Seeds:** e.g. `20260303000000_seed_categories.sql` seeds categories for the Open Shop form.  
-- **Edge functions:** e.g. `delete-user` for account deletion.  
+- **Edge functions:** e.g. `delete-user` for account deletion; **email** via Resend (see below).  
+- **Transactional email (Resend):** Supabase Edge Functions use the official **Resend Node.js SDK** (`resend.emails.send` / `resend.batch.send`) via `supabase/functions/_shared/resend.ts`. Setup: verify your domain at [resend.com/domains](https://resend.com/domains), add `RESEND_API_KEY` and `TRANSACTIONAL_FROM_EMAIL` in Dashboard → Edge Functions → Secrets, then deploy functions in `supabase/functions/README.md`. **Auth emails** (password reset, confirm signup) are configured separately under Authentication → SMTP in Supabase.  
 - **RPCs (curation):** `get_discover_shop_ids()` (Discover page), `set_shop_on_discover`, `set_product_on_discover`, `set_shop_featured` (Dev panel). See migrations `20260333000000_discover_curation_dev.sql`, `20260334000000_dev_set_shop_featured_rpc.sql`, `20260335000000_discover_shop_ids_rpc_and_public_read.sql`.  
 - **Docs:** See `supabase/README-MIGRATIONS.md` for migration and seed instructions.
 

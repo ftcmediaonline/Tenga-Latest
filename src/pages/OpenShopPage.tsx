@@ -197,8 +197,8 @@ const OpenShopPage = () => {
       }
 
       // Send confirmation email via Edge Function (Resend)
-      await supabase.functions.invoke('send-shop-confirmation', {
-        body: { email: email.trim(), shopName: shopName.trim() },
+      await supabase.functions.invoke('send-email', {
+        body: { action: 'shop-confirmation', email: email.trim(), shopName: shopName.trim() },
       });
 
       setSubmitted(true);

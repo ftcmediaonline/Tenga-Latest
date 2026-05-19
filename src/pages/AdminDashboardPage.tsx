@@ -100,6 +100,12 @@ const AdminDashboardPage = () => {
   const [userFilterDate, setUserFilterDate] = useState<string>('all');
 
   useEffect(() => {
+    if (!authLoading && !user) {
+      navigate('/auth', { replace: true });
+    }
+  }, [authLoading, user, navigate]);
+
+  useEffect(() => {
     if (!user) {
       setProfileLoading(false);
       return;
@@ -204,17 +210,6 @@ const AdminDashboardPage = () => {
               names[p.id] = p.full_name || p.username || 'Customer';
             });
             setAdminCustomerNames(names);
-          });
-          supabase.from('profiles').select('user_id, full_name, username').in('user_id', customerIds).then(({ data: profs }) => {
-            if (profs?.length) {
-              setAdminCustomerNames((prev) => {
-                const next = { ...prev };
-                (profs as { user_id: string; full_name: string | null; username: string | null }[]).forEach((p) => {
-                  next[p.user_id] = p.full_name || p.username || 'Customer';
-                });
-                return next;
-              });
-            }
           });
         }
         if (shopIds.length > 0) {
@@ -440,6 +435,16 @@ const AdminDashboardPage = () => {
       setPendingShops((prev) => prev.filter((s) => s.id !== shop.id));
       setAllShops((prev) => prev.map((s) => (s.id === shop.id ? { ...s, is_verified: true } : s)));
       toast({ title: 'Shop approved', description: `${shop.name} is now live.` });
+      const { error: emailError } = await supabase.functions.invoke('send-email', {
+        body: { action: 'shop-approved', shop_id: shop.id },
+      });
+      if (emailError) {
+        toast({
+          title: 'Approval email not sent',
+          description: emailError.message,
+          variant: 'destructive',
+        });
+      }
     } else toast({ title: 'Failed to approve', description: error.message, variant: 'destructive' });
   };
 
@@ -517,8 +522,8 @@ const AdminDashboardPage = () => {
     }
     setAdminPromoSending(true);
     try {
-      const { data, error } = await supabase.functions.invoke('send-admin-promo-to-store-owners', {
-        body: { subject, body, tier: adminPromoTier },
+      const { data, error } = await supabase.functions.invoke('send-email', {
+        body: { action: 'admin-promo-store-owners', subject, body, tier: adminPromoTier },
       });
       if (error) throw error;
       const sent = (data as { sent?: number })?.sent ?? 0;
@@ -646,7 +651,6 @@ const AdminDashboardPage = () => {
   }
 
   if (!user) {
-    navigate('/auth', { replace: true });
     return null;
   }
 
