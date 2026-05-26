@@ -17,6 +17,7 @@ import { fetchCategories } from '@/data/categories';
 import type { Category } from '@/types';
 import { useAuth } from '@/hooks/useAuth';
 import { supabase } from '@/integrations/supabase/client';
+import { sendTransactionalEmail } from '@/utils/emailService';
 
 const STEPS = [
   { id: 'details', label: 'Shop Details', icon: Store },
@@ -197,8 +198,10 @@ const OpenShopPage = () => {
       }
 
       // Send confirmation email via Edge Function (Resend)
-      await supabase.functions.invoke('send-email', {
-        body: { action: 'shop-confirmation', email: email.trim(), shopName: shopName.trim() },
+      await sendTransactionalEmail({
+        action: 'shop-confirmation',
+        email: email.trim(),
+        shopName: shopName.trim(),
       });
 
       setSubmitted(true);

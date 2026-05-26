@@ -1,19 +1,22 @@
 import { Link } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { Star, MapPin, BadgeCheck } from 'lucide-react';
+import { cn } from '@/lib/utils';
 import { Shop } from '@/types';
 
 interface ShopCardProps {
   shop: Shop;
   index?: number;
+  className?: string;
 }
 
-const ShopCard = ({ shop, index = 0 }: ShopCardProps) => {
+const ShopCard = ({ shop, index = 0, className }: ShopCardProps) => {
   return (
     <motion.div
       initial={{ opacity: 0, y: 20 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ delay: index * 0.1 }}
+      className={className}
     >
       <Link
         to={`/shop/${shop.slug}`}

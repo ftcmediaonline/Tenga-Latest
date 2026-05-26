@@ -38,6 +38,17 @@ function hasEmailCallbackInUrl(): boolean {
   );
 }
 
+function hasRecoveryCallbackInUrl(): boolean {
+  const hash = window.location.hash;
+  const params = new URLSearchParams(window.location.search);
+  return (
+    hash.includes('type=recovery') ||
+    params.get('type') === 'recovery' ||
+    hash.includes('recovery_token=') ||
+    params.has('recovery_token')
+  );
+}
+
 function signupErrorMessage(error: { message?: string; status?: number }): string {
   const msg = (error.message ?? '').toLowerCase();
   if (error.status === 422 && (msg.includes('redirect') || msg.includes('url'))) {
@@ -46,26 +57,36 @@ function signupErrorMessage(error: { message?: string; status?: number }): strin
   return error.message ?? 'Signup failed';
 }
 
+type AuthMode = 'login' | 'signup' | 'forgot-password' | 'update-password';
+
 const AuthPage = () => {
   const navigate = useNavigate();
   const { toast } = useToast();
   const { theme } = useTheme();
-  const [isLogin, setIsLogin] = useState(true);
+  const [mode, setMode] = useState<AuthMode>('login');
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
 
   const [loginForm, setLoginForm] = useState({ email: '', password: '' });
   const [signupForm, setSignupForm] = useState({ fullName: '', email: '', password: '', confirmPassword: '' });
+  const [forgotForm, setForgotForm] = useState({ email: '' });
+  const [updateForm, setUpdateForm] = useState({ password: '', confirmPassword: '' });
   const [pendingVerificationEmail, setPendingVerificationEmail] = useState<string | null>(null);
   const [resendingVerification, setResendingVerification] = useState(false);
   const handlingEmailCallback = useRef(hasEmailCallbackInUrl());
+
+  useEffect(() => {
+    if (hasRecoveryCallbackInUrl()) {
+      setMode('update-password');
+    }
+  }, []);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const authError = params.get('error_description') ?? params.get('error');
     if (authError) {
       toast({
-        title: 'Verification link invalid',
+        title: 'Authentication link invalid',
         description: decodeURIComponent(authError.replace(/\+/g, ' ')),
         variant: 'destructive',
       });
@@ -74,7 +95,7 @@ const AuthPage = () => {
       return;
     }
 
-    if (!handlingEmailCallback.current) return;
+    if (!handlingEmailCallback.current && !hasRecoveryCallbackInUrl()) return;
 
     const completeVerification = () => {
       if (!handlingEmailCallback.current) return;
@@ -85,7 +106,9 @@ const AuthPage = () => {
     };
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
-      if (
+      if (event === 'PASSWORD_RECOVERY') {
+        setMode('update-password');
+      } else if (
         handlingEmailCallback.current &&
         session &&
         (event === 'SIGNED_IN' || event === 'INITIAL_SESSION')
@@ -110,17 +133,34 @@ const AuthPage = () => {
       return;
     }
     setLoading(true);
-    const { error } = await supabase.auth.signInWithPassword({
+    const { data, error } = await supabase.auth.signInWithPassword({
       email: loginForm.email,
       password: loginForm.password,
     });
-    setLoading(false);
+    
     if (error) {
+      setLoading(false);
       toast({ title: 'Login failed', description: error.message, variant: 'destructive' });
-    } else {
-      toast({ title: 'Welcome back!' });
-      navigate('/');
+      return;
     }
+
+    const user = data.user;
+    if (user && !user.email_confirmed_at) {
+      // Clear session immediately so they are strictly logged out
+      await supabase.auth.signOut();
+      setLoading(false);
+      setPendingVerificationEmail(loginForm.email);
+      toast({
+        title: 'Email confirmation required',
+        description: 'Your email has not been verified. Please click the verification link in your inbox before signing in.',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    setLoading(false);
+    toast({ title: 'Welcome back!' });
+    navigate('/');
   };
 
   const handleSignup = async (e: React.FormEvent) => {
@@ -176,6 +216,59 @@ const AuthPage = () => {
     });
   };
 
+  const handleForgotPassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!forgotForm.email) {
+      toast({ title: 'Please enter your email address', variant: 'destructive' });
+      return;
+    }
+    setLoading(true);
+    const { error } = await supabase.auth.resetPasswordForEmail(forgotForm.email.trim(), {
+      redirectTo: getAuthRedirectUrl(),
+    });
+    setLoading(false);
+    if (error) {
+      toast({ title: 'Reset request failed', description: error.message, variant: 'destructive' });
+    } else {
+      toast({
+        title: 'Recovery email sent',
+        description: 'Check your inbox (and spam) for the password reset link.',
+      });
+      setMode('login');
+    }
+  };
+
+  const handleUpdatePassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!updateForm.password || !updateForm.confirmPassword) {
+      toast({ title: 'Please fill in all fields', variant: 'destructive' });
+      return;
+    }
+    if (updateForm.password !== updateForm.confirmPassword) {
+      toast({ title: 'Passwords do not match', variant: 'destructive' });
+      return;
+    }
+    if (updateForm.password.length < 6) {
+      toast({ title: 'Password must be at least 6 characters', variant: 'destructive' });
+      return;
+    }
+    setLoading(true);
+    const { error } = await supabase.auth.updateUser({
+      password: updateForm.password,
+    });
+    setLoading(false);
+    if (error) {
+      toast({ title: 'Could not update password', description: error.message, variant: 'destructive' });
+    } else {
+      toast({
+        title: 'Password updated!',
+        description: 'Your password was successfully reset. You are now signed in.',
+      });
+      window.history.replaceState({}, document.title, '/auth');
+      navigate('/');
+    }
+  };
+
   const handleResendVerification = async () => {
     const email = pendingVerificationEmail?.trim() || signupForm.email.trim();
     if (!email) {
@@ -201,9 +294,35 @@ const AuthPage = () => {
   };
 
   const formVariants = {
-    hidden: { opacity: 0, x: isLogin ? -20 : 20 },
-    visible: { opacity: 1, x: 0, transition: { duration: 0.3 } },
-    exit: { opacity: 0, x: isLogin ? 20 : -20, transition: { duration: 0.2 } },
+    hidden: { opacity: 0, y: 10 },
+    visible: { opacity: 1, y: 0, transition: { duration: 0.3 } },
+    exit: { opacity: 0, y: -10, transition: { duration: 0.2 } },
+  };
+
+  const getHeaderTitle = () => {
+    switch (mode) {
+      case 'signup':
+        return 'Create your account';
+      case 'forgot-password':
+        return 'Reset password';
+      case 'update-password':
+        return 'Create new password';
+      default:
+        return 'Welcome back';
+    }
+  };
+
+  const getHeaderDesc = () => {
+    switch (mode) {
+      case 'signup':
+        return 'Join the Tenga marketplace';
+      case 'forgot-password':
+        return "Enter your email to receive a recovery link";
+      case 'update-password':
+        return 'Enter a secure new password for your account';
+      default:
+        return 'Sign in to your Tenga account';
+    }
   };
 
   return (
@@ -218,17 +337,17 @@ const AuthPage = () => {
           <div className="text-center mb-8">
             <img src={theme === 'dark' ? tengaLogoWhite : tengaLogo} alt="Tenga" className="h-12 w-auto mx-auto mb-4" />
             <h1 className="text-2xl font-bold text-foreground">
-              {isLogin ? 'Welcome back' : 'Create your account'}
+              {getHeaderTitle()}
             </h1>
             <p className="text-muted-foreground mt-1">
-              {isLogin ? 'Sign in to your Tenga account' : 'Join the Tenga marketplace'}
+              {getHeaderDesc()}
             </p>
           </div>
 
           <Card className="border-border">
             <CardContent className="pt-6">
               <AnimatePresence mode="wait">
-                {isLogin ? (
+                {mode === 'login' && (
                   <motion.form
                     key="login"
                     variants={formVariants}
@@ -253,7 +372,16 @@ const AuthPage = () => {
                       </div>
                     </div>
                     <div className="space-y-2">
-                      <Label htmlFor="login-password">Password</Label>
+                      <div className="flex items-center justify-between">
+                        <Label htmlFor="login-password">Password</Label>
+                        <button
+                          type="button"
+                          onClick={() => setMode('forgot-password')}
+                          className="text-xs text-primary hover:underline font-medium"
+                        >
+                          Forgot password?
+                        </button>
+                      </div>
                       <div className="relative">
                         <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                         <Input
@@ -273,11 +401,13 @@ const AuthPage = () => {
                         </button>
                       </div>
                     </div>
-                    <Button type="submit" className="w-full" disabled={loading}>
+                    <Button type="submit" className="w-full bg-gradient-primary" disabled={loading}>
                       {loading ? 'Signing in...' : 'Sign In'}
                     </Button>
                   </motion.form>
-                ) : (
+                )}
+
+                {mode === 'signup' && (
                   <motion.form
                     key="signup"
                     variants={formVariants}
@@ -349,7 +479,7 @@ const AuthPage = () => {
                         />
                       </div>
                     </div>
-                    <Button type="submit" className="w-full" disabled={loading}>
+                    <Button type="submit" className="w-full bg-gradient-primary" disabled={loading}>
                       {loading ? 'Creating account...' : 'Create Account'}
                     </Button>
                     {(pendingVerificationEmail || signupForm.email) && (
@@ -359,7 +489,7 @@ const AuthPage = () => {
                           type="button"
                           onClick={handleResendVerification}
                           disabled={resendingVerification}
-                          className="text-primary hover:underline disabled:opacity-50"
+                          className="text-primary hover:underline disabled:opacity-50 font-medium"
                         >
                           {resendingVerification ? 'Sending…' : 'Resend verification email'}
                         </button>
@@ -367,15 +497,113 @@ const AuthPage = () => {
                     )}
                   </motion.form>
                 )}
+
+                {mode === 'forgot-password' && (
+                  <motion.form
+                    key="forgot"
+                    variants={formVariants}
+                    initial="hidden"
+                    animate="visible"
+                    exit="exit"
+                    onSubmit={handleForgotPassword}
+                    className="space-y-4"
+                  >
+                    <div className="space-y-2">
+                      <Label htmlFor="forgot-email">Email</Label>
+                      <div className="relative">
+                        <Mail className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                        <Input
+                          id="forgot-email"
+                          type="email"
+                          placeholder="you@example.com"
+                          className="pl-10"
+                          value={forgotForm.email}
+                          onChange={(e) => setForgotForm({ email: e.target.value })}
+                        />
+                      </div>
+                    </div>
+                    <Button type="submit" className="w-full bg-gradient-primary" disabled={loading}>
+                      {loading ? 'Sending link...' : 'Send Reset Link'}
+                    </Button>
+                  </motion.form>
+                )}
+
+                {mode === 'update-password' && (
+                  <motion.form
+                    key="update"
+                    variants={formVariants}
+                    initial="hidden"
+                    animate="visible"
+                    exit="exit"
+                    onSubmit={handleUpdatePassword}
+                    className="space-y-4"
+                  >
+                    <div className="space-y-2">
+                      <Label htmlFor="update-password">New Password</Label>
+                      <div className="relative">
+                        <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                        <Input
+                          id="update-password"
+                          type={showPassword ? 'text' : 'password'}
+                          placeholder="••••••••"
+                          className="pl-10 pr-10"
+                          value={updateForm.password}
+                          onChange={(e) => setUpdateForm({ ...updateForm, password: e.target.value })}
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setShowPassword(!showPassword)}
+                          className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                        >
+                          {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                        </button>
+                      </div>
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="update-confirm">Confirm Password</Label>
+                      <div className="relative">
+                        <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                        <Input
+                          id="update-confirm"
+                          type={showPassword ? 'text' : 'password'}
+                          placeholder="••••••••"
+                          className="pl-10"
+                          value={updateForm.confirmPassword}
+                          onChange={(e) => setUpdateForm({ ...updateForm, confirmPassword: e.target.value })}
+                        />
+                      </div>
+                    </div>
+                    <Button type="submit" className="w-full bg-gradient-primary" disabled={loading}>
+                      {loading ? 'Updating password...' : 'Update Password'}
+                    </Button>
+                  </motion.form>
+                )}
               </AnimatePresence>
 
               <div className="mt-6 text-center">
-                <button
-                  onClick={() => setIsLogin(!isLogin)}
-                  className="text-sm text-muted-foreground hover:text-primary transition-colors"
-                >
-                  {isLogin ? "Don't have an account? Sign up" : 'Already have an account? Sign in'}
-                </button>
+                {mode === 'login' ? (
+                  <button
+                    onClick={() => setMode('signup')}
+                    className="text-sm text-muted-foreground hover:text-primary transition-colors font-medium"
+                  >
+                    Don't have an account? Sign up
+                  </button>
+                ) : mode === 'signup' ? (
+                  <button
+                    onClick={() => setMode('login')}
+                    className="text-sm text-muted-foreground hover:text-primary transition-colors font-medium"
+                  >
+                    Already have an account? Sign in
+                  </button>
+                ) : (
+                  <button
+                    onClick={() => setMode('login')}
+                    className="text-sm text-muted-foreground hover:text-primary transition-colors flex items-center justify-center gap-1.5 mx-auto font-medium"
+                  >
+                    <ArrowLeft className="h-4 w-4" />
+                    Back to sign in
+                  </button>
+                )}
               </div>
             </CardContent>
           </Card>

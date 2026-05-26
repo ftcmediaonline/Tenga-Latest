@@ -101,18 +101,21 @@ const HeroSection = () => {
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 0.4 }}
-            className="mt-8 sm:mt-12 grid grid-cols-3 gap-4 sm:gap-8"
+            className="mt-8 sm:mt-12 flex flex-wrap justify-center gap-3 sm:grid sm:grid-cols-3 sm:gap-8"
           >
             {[
               { value: '500+', label: 'Unique Shops' },
               { value: '50K+', label: 'Products' },
               { value: '100K+', label: 'Happy Customers' },
             ].map((stat, index) => (
-              <div key={index} className="text-center">
-                <div className="text-xl sm:text-2xl md:text-3xl font-bold text-foreground">
+              <div
+                key={index}
+                className="text-center px-4 py-3 rounded-2xl bg-card/60 dark:bg-card/25 backdrop-blur-md border border-border/60 shadow-sm min-w-[100px] flex-1 sm:flex-initial sm:bg-transparent sm:dark:bg-transparent sm:backdrop-blur-none sm:border-none sm:shadow-none sm:p-0"
+              >
+                <div className="text-xl sm:text-2xl md:text-3xl font-bold bg-gradient-primary bg-clip-text text-transparent dark:text-foreground sm:text-foreground sm:bg-none">
                   {stat.value}
                 </div>
-                <div className="mt-0.5 sm:mt-1 text-xs sm:text-sm text-muted-foreground">
+                <div className="mt-0.5 sm:mt-1 text-[10px] xs:text-xs sm:text-sm font-medium sm:font-normal text-muted-foreground uppercase tracking-wider sm:normal-case sm:tracking-normal">
                   {stat.label}
                 </div>
               </div>

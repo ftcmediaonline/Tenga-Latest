@@ -15,6 +15,7 @@ import Footer from '@/components/layout/Footer';
 import CartDrawer from '@/components/layout/CartDrawer';
 import { z } from 'zod';
 import { useToast } from '@/hooks/use-toast';
+import { sendTransactionalEmail } from '@/utils/emailService';
 
 const addressSchema = z.object({
   firstName: z.string().trim().min(1, 'First name is required').max(50),
@@ -139,20 +140,18 @@ const CheckoutPage = () => {
           }
         }
 
-        await supabase.functions.invoke('send-email', {
-          body: {
-            action: 'order-confirmation',
-            email: addr.email,
-            customerName: `${addr.firstName} ${addr.lastName}`.trim(),
-            orderNumber,
-            shippingMethod,
-            total: orderTotal,
-            items: items.map((i) => ({
-              name: i.product.name,
-              qty: i.quantity,
-              price: i.product.price,
-            })),
-          },
+        await sendTransactionalEmail({
+          action: 'order-confirmation',
+          email: addr.email,
+          customerName: `${addr.firstName} ${addr.lastName}`.trim(),
+          orderNumber,
+          shippingMethod,
+          total: orderTotal,
+          items: items.map((i) => ({
+            name: i.product.name,
+            qty: i.quantity,
+            price: Number(i.product.price),
+          })),
         });
       } finally {
         setPlacing(false);

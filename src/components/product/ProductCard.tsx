@@ -13,9 +13,10 @@ interface ProductCardProps {
   shop?: Shop;
   index?: number;
   variant?: 'default' | 'compact';
+  className?: string;
 }
 
-const ProductCard = ({ product, shop, index = 0, variant = 'default' }: ProductCardProps) => {
+const ProductCard = ({ product, shop, index = 0, variant = 'default', className }: ProductCardProps) => {
   const { addToCart } = useCart();
   const { isInWishlist, toggleWishlist } = useWishlist();
   const isLiked = isInWishlist(product.id);
@@ -50,6 +51,7 @@ const ProductCard = ({ product, shop, index = 0, variant = 'default' }: ProductC
       transition={{ delay: index * 0.05 }}
       onMouseEnter={() => setIsHovered(true)}
       onMouseLeave={() => setIsHovered(false)}
+      className={className}
     >
       <Link
         to={`/product/${product.slug}`}

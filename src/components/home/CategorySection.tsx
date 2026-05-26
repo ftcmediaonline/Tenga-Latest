@@ -40,8 +40,8 @@ const CategorySection = () => {
           </motion.p>
         </div>
 
-        {/* Categories Grid - 2 cols mobile, 4 tablet, 8 desktop */}
-        <div className="grid grid-cols-2 gap-3 sm:gap-4 sm:grid-cols-4 lg:grid-cols-8">
+        {/* Categories Carousel / Grid */}
+        <div className="flex flex-row overflow-x-auto gap-3 snap-x snap-mandatory hide-scrollbar -mx-4 px-4 py-1.5 sm:grid sm:grid-cols-4 lg:grid-cols-8 sm:gap-4 sm:overflow-x-visible sm:snap-none sm:mx-0 sm:px-0 sm:py-0">
           {categories.map((category, index) => {
             const Icon = category.icon;
             return (
@@ -51,17 +51,18 @@ const CategorySection = () => {
               whileInView={{ opacity: 1, y: 0 }}
               viewport={{ once: true }}
               transition={{ delay: index * 0.05 }}
+              className="w-[115px] shrink-0 snap-start sm:w-auto sm:shrink sm:snap-none"
             >
               <Link
                 to={`/discover?category=${encodeURIComponent(category.name)}`}
-                className="group flex flex-col items-center gap-2 sm:gap-3 rounded-xl sm:rounded-2xl bg-background p-4 sm:p-6 shadow-card transition-all hover:shadow-card-hover active:scale-[0.98] min-h-[100px] sm:min-h-0 justify-center"
+                className="group flex flex-col items-center gap-2 sm:gap-3 rounded-xl sm:rounded-2xl bg-background p-4 sm:p-6 shadow-card transition-all hover:shadow-card-hover active:scale-[0.98] min-h-[105px] sm:min-h-0 justify-center h-full"
               >
-                <Icon className="h-8 w-8 sm:h-10 sm:w-10 text-primary" />
+                <Icon className="h-7 w-7 sm:h-10 sm:w-10 text-primary" />
                 <div className="text-center">
-                  <span className="block text-xs sm:text-sm font-medium text-foreground group-hover:text-primary transition-colors line-clamp-2">
+                  <span className="block text-[11px] sm:text-sm font-medium text-foreground group-hover:text-primary transition-colors line-clamp-2">
                     {category.name}
                   </span>
-                  <span className="text-[10px] sm:text-xs text-muted-foreground">
+                  <span className="text-[9px] sm:text-xs text-muted-foreground">
                     {category.productCount > 0 ? `${category.productCount.toLocaleString()} items` : 'Browse'}
                   </span>
                 </div>

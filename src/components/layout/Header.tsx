@@ -180,7 +180,7 @@ const Header = () => {
           </Button>
 
           {/* Dark Mode Toggle */}
-          <Button variant="ghost" size="icon" className="h-11 w-11 touch-target" onClick={toggleTheme}>
+          <Button variant="ghost" size="icon" className="hidden md:flex h-11 w-11 touch-target" onClick={toggleTheme}>
             {theme === 'light' ? <Moon className="h-5 w-5" /> : <Sun className="h-5 w-5" />}
           </Button>
 
@@ -223,7 +223,7 @@ const Header = () => {
           {user ? (
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <Button variant="ghost" size="icon" className="h-11 w-11 touch-target">
+                <Button variant="ghost" size="icon" className="hidden md:flex h-11 w-11 touch-target">
                   <User className="h-5 w-5" />
                 </Button>
               </DropdownMenuTrigger>
@@ -265,7 +265,7 @@ const Header = () => {
               </DropdownMenuContent>
             </DropdownMenu>
           ) : (
-            <Button variant="ghost" size="icon" className="h-11 w-11 touch-target" onClick={() => navigate('/auth')}>
+            <Button variant="ghost" size="icon" className="hidden md:flex h-11 w-11 touch-target" onClick={() => navigate('/auth')}>
               <User className="h-5 w-5" />
             </Button>
           )}
@@ -343,6 +343,38 @@ const Header = () => {
                   </span>
                 )}
               </Link>
+              {/* Theme Toggle inside Mobile Drawer */}
+              <button
+                onClick={() => {
+                  toggleTheme();
+                  setIsMobileMenuOpen(false);
+                }}
+                className="px-4 py-3.5 min-h-[48px] flex items-center text-base font-medium text-foreground rounded-lg hover:bg-secondary active:bg-secondary transition-colors gap-2 w-full text-left"
+              >
+                {theme === 'light' ? (
+                  <>
+                    <Moon className="h-4 w-4" />
+                    Dark Mode
+                  </>
+                ) : (
+                  <>
+                    <Sun className="h-4 w-4" />
+                    Light Mode
+                  </>
+                )}
+              </button>
+              
+              {!user && (
+                <Link
+                  to="/auth"
+                  className="px-4 py-3.5 min-h-[48px] flex items-center text-base font-medium text-foreground rounded-lg hover:bg-secondary active:bg-secondary transition-colors gap-2"
+                  onClick={() => setIsMobileMenuOpen(false)}
+                >
+                  <User className="h-4 w-4" />
+                  Sign In / Register
+                </Link>
+              )}
+
               {user && (
                 <>
                   <Link
@@ -376,7 +408,7 @@ const Header = () => {
                       onClick={() => setIsMobileMenuOpen(false)}
                     >
                       <Store className="h-4 w-4" />
-                      Seller
+                      Seller dashboard
                     </Link>
                   )}
                 </>
@@ -400,6 +432,18 @@ const Header = () => {
                   <Code2 className="h-4 w-4" />
                   Dev
                 </Link>
+              )}
+              {user && (
+                <button
+                  onClick={() => {
+                    signOut();
+                    setIsMobileMenuOpen(false);
+                  }}
+                  className="px-4 py-3.5 min-h-[48px] flex items-center text-base font-medium text-destructive rounded-lg hover:bg-secondary active:bg-secondary transition-colors gap-2 w-full text-left"
+                >
+                  <LogOut className="h-4 w-4" />
+                  Sign Out
+                </button>
               )}
             </nav>
           </motion.div>

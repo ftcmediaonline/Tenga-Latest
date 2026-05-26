@@ -97,9 +97,9 @@ const FeaturedShops = () => {
           </div>
         ) : (
           <>
-            <div className="grid grid-cols-2 gap-4 sm:gap-6 sm:grid-cols-2 lg:grid-cols-4">
+            <div className="flex overflow-x-auto gap-4 snap-x snap-mandatory hide-scrollbar -mx-4 px-4 pb-4 sm:grid sm:grid-cols-2 lg:grid-cols-4 sm:gap-6 sm:overflow-x-visible sm:snap-none sm:mx-0 sm:px-0 sm:pb-0">
               {featuredShops.map((shop, index) => (
-                <ShopCard key={shop.id} shop={shop} index={index} />
+                <ShopCard key={shop.id} shop={shop} index={index} className="w-[280px] shrink-0 snap-start sm:w-auto sm:shrink sm:snap-none" />
               ))}
             </div>
             <div className="mt-6 text-center sm:hidden">
