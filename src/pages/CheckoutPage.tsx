@@ -37,6 +37,7 @@ const CheckoutPage = () => {
   const { user } = useAuth();
   const { items, removeFromCart, updateQuantity, totalPrice, totalItems, clearCart } = useCart();
   const [shippingMethod, setShippingMethod] = useState('standard');
+  const [paymentMethod, setPaymentMethod] = useState<'cash' | 'iveri'>('cash');
   const [placing, setPlacing] = useState(false);
   const [errors, setErrors] = useState<Partial<Record<keyof AddressForm, string>>>({});
   const [form, setForm] = useState<AddressForm>({
@@ -59,6 +60,138 @@ const CheckoutPage = () => {
     if (errors[field]) {
       setErrors(prev => ({ ...prev, [field]: undefined }));
     }
+  };
+
+  const triggerLiteBoxPayment = (gatewayUrl: string, formFields: Record<string, string>, addressData: AddressForm) => {
+    // Extract base URL (e.g. https://portal.host.iveri.com)
+    const urlObj = new URL(gatewayUrl);
+    const portalUrl = `${urlObj.protocol}//${urlObj.host}`;
+
+    // Clean any old forms
+    const oldForm = document.getElementById('tenga-iveri-form');
+    if (oldForm) oldForm.remove();
+
+    // Create custom form exactly matching iVeri LiteBox specifications
+    const form = document.createElement('form');
+    form.id = 'tenga-iveri-form';
+    form.method = 'POST';
+    form.action = gatewayUrl;
+    form.style.display = 'none';
+
+    Object.entries(formFields).forEach(([key, val]) => {
+      const input = document.createElement('input');
+      input.type = 'hidden';
+      input.name = key;
+      input.value = String(val);
+      form.appendChild(input);
+    });
+
+    // LiteBox looks for a specific element with id="iveri-litebox-button" inside the DOM to trigger modal
+    const triggerBtn = document.createElement('button');
+    triggerBtn.id = 'iveri-litebox-button';
+    triggerBtn.type = 'submit';
+    triggerBtn.style.display = 'none';
+    form.appendChild(triggerBtn);
+
+    document.body.appendChild(form);
+
+    // Dynamic loader helpers
+    const loadScript = (url: string): Promise<void> => {
+      return new Promise((resolve, reject) => {
+        const scripts = document.getElementsByTagName('script');
+        for (let i = 0; i < scripts.length; i++) {
+          if (scripts[i].src === url) {
+            resolve();
+            return;
+          }
+        }
+        const script = document.createElement('script');
+        script.src = url;
+        script.onload = () => resolve();
+        script.onerror = () => reject(new Error(`Failed to load script: ${url}`));
+        document.head.appendChild(script);
+      });
+    };
+
+    // Load assets dynamically and pop up the LiteBox modal
+    const startLiteBox = async () => {
+      try {
+        toast({
+          title: '🔐 Securing Gateway...',
+          description: 'Loading secure payment checkout dialog.',
+        });
+
+        // 1. Load JQuery if not present
+        if (!(window as any).$) {
+          await loadScript('https://code.jquery.com/jquery-3.6.0.min.js');
+        }
+        
+        const $ = (window as any).$;
+
+        // 2. Load Bootstrap JS bundle (with Popper) dynamically to avoid bloating regular page load
+        await loadScript('https://cdnjs.cloudflare.com/ajax/libs/bootstrap/5.3.0/js/bootstrap.bundle.min.js');
+
+        // 3. Load iVeri's jQuery LiteBox script
+        await loadScript(`${portalUrl}/scripts/jquery/js/jquery.litebox.js`);
+
+        // 4. Bind complete callback event
+        (window as any).liteboxComplete = (data: any) => {
+          console.log('[iVeri LiteBox] Payment Complete Callback:', data);
+          setPlacing(false);
+
+          const status = data.Lite_Payment_Card_Status || data.Lite_Status;
+          if (status === '0' || status === 'Success' || status === 'APPROVED') {
+            toast({
+              title: '🎉 Payment Successful!',
+              description: 'Your order has been authorized successfully.',
+            });
+            clearCart();
+            // Redirect to confirmation page
+            const confirmationState = {
+              orderNumber: formFields.Ecom_ConsumerOrderID,
+              items: items.map(i => ({ name: i.product.name, qty: i.quantity, price: i.product.price, image: i.product.images[0] })),
+              shippingAddress: addressData,
+              shippingMethod,
+              shippingCost,
+              subtotal: totalPrice,
+              total: orderTotal,
+            };
+            navigate('/order-confirmation', { state: confirmationState });
+          } else {
+            toast({
+              title: 'Payment Declined',
+              description: data.Lite_Result_Description || 'The transaction was refused or cancelled.',
+              variant: 'destructive',
+            });
+          }
+        };
+
+        // 5. Watch for modal closing event in bootstrap to clean up our places loading state if modal is manually closed
+        $(document).on('hidden.bs.modal', '#liteboxModal, .modal', function () {
+          console.log('[iVeri LiteBox] Modal closed by user');
+          setPlacing(false);
+        });
+
+        // 6. Initialize iVeri LiteBox
+        if (typeof (window as any).liteboxInitialise === 'function') {
+          (window as any).liteboxInitialise(portalUrl);
+        }
+
+        // 7. Fire click event to trigger pop up modal!
+        setTimeout(() => {
+          const btn = document.getElementById('iveri-litebox-button');
+          if (btn) btn.click();
+        }, 150);
+
+      } catch (err) {
+        console.error('[iVeri LiteBox] Loading failed, running direct redirect fallback:', err);
+        // Fallback: direct form post redirect
+        form.submit();
+        clearCart();
+      }
+    };
+
+    startLiteBox();
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -87,7 +220,59 @@ const CheckoutPage = () => {
       total: orderTotal,
     };
 
-    // Persist orders to DB when logged in (so sellers see them)
+    // --- CASE 1: ONLINE CARD / MOBILE PAYMENT VIA IVERI (NEDBANK LITEBOX MODAL) ---
+    if (paymentMethod === 'iveri') {
+      if (!user) {
+        toast({ 
+          title: 'Account Required', 
+          description: 'Please sign in to complete secure online card payments.', 
+          variant: 'destructive' 
+        });
+        return;
+      }
+
+      setPlacing(true);
+      try {
+        console.log('[iVeri] Initializing LiteBox payment for order:', orderNumber);
+        
+        const { data, error } = await supabase.functions.invoke('iveri-gateway', {
+          body: {
+            items,
+            address: result.data,
+            shippingMethod,
+            shippingCost,
+          },
+        });
+
+        if (error || !data || !data.success) {
+          console.error('[iVeri] Payment Init Failed:', error || data);
+          toast({
+            title: 'Payment Gateway Error',
+            description: error?.message || data?.error || 'Could not connect to iVeri Payment Gateway.',
+            variant: 'destructive',
+          });
+          setPlacing(false);
+          return;
+        }
+
+        const { gatewayUrl, formFields } = data;
+        
+        // Launch the highly aesthetic and premium iVeri LiteBox Popup Modal!
+        triggerLiteBoxPayment(gatewayUrl, formFields, result.data);
+        return;
+      } catch (err) {
+        console.error('[iVeri] Direct connection failure:', err);
+        toast({
+          title: 'Payment error',
+          description: err instanceof Error ? err.message : String(err),
+          variant: 'destructive',
+        });
+        setPlacing(false);
+        return;
+      }
+    }
+
+    // --- CASE 2: OFFLINE PAYMENT (CASH ON DELIVERY / PICKUP) ---
     if (user) {
       setPlacing(true);
       const byShop = new Map<string, typeof items>();
@@ -98,7 +283,7 @@ const CheckoutPage = () => {
       }
       try {
         const addr = result.data;
-          for (const [shopId, shopItems] of byShop) {
+        for (const [shopId, shopItems] of byShop) {
           const orderTotalForShop = shopItems.reduce((s, i) => s + i.product.price * i.quantity, 0);
           const { data: order, error: orderError } = await supabase
             .from('orders')
@@ -117,6 +302,8 @@ const CheckoutPage = () => {
               shipping_zip_code: addr.zipCode,
               shipping_country: addr.country,
               shipping_method: shippingMethod,
+              payment_method: 'cash_on_delivery',
+              payment_status: 'pending',
             })
             .select('id')
             .single();
@@ -182,7 +369,103 @@ const CheckoutPage = () => {
   }
 
   return (
-    <div className="min-h-screen flex flex-col">
+    <div className="min-h-screen flex flex-col relative">
+      {/* Target container for iVeri LiteBox modal rendering */}
+      <div id="iveri-litebox"></div>
+
+      {/* Premium custom glassmorphic styling for the iVeri LiteBox payment popup */}
+      <style>{`
+        .modal-backdrop {
+          position: fixed;
+          top: 0;
+          left: 0;
+          width: 100vw;
+          height: 100vh;
+          background-color: rgba(15, 23, 42, 0.6) !important;
+          backdrop-filter: blur(8px) !important;
+          z-index: 1040;
+        }
+        .modal {
+          position: fixed;
+          top: 0;
+          left: 0;
+          z-index: 1050;
+          display: none;
+          width: 100%;
+          height: 100%;
+          overflow: hidden;
+          outline: 0;
+        }
+        .modal.show {
+          display: flex !important;
+          align-items: center !important;
+          justify-content: center !important;
+        }
+        .modal-dialog {
+          position: relative;
+          width: 100% !important;
+          max-width: 550px !important;
+          margin: 1.75rem auto !important;
+          pointer-events: none;
+          z-index: 1060;
+        }
+        .modal-content {
+          position: relative;
+          display: flex;
+          flex-direction: column;
+          width: 100%;
+          pointer-events: auto;
+          background-color: hsl(var(--background)) !important;
+          background-clip: padding-box;
+          border: 1px solid hsl(var(--border)) !important;
+          border-radius: 16px !important;
+          outline: 0;
+          box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25) !important;
+          overflow: hidden !important;
+        }
+        .modal-header {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          padding: 1rem 1.5rem !important;
+          border-bottom: 1px solid hsl(var(--border)) !important;
+        }
+        .modal-header .btn-close, .modal-header .close {
+          background: none;
+          border: none;
+          font-size: 1.5rem;
+          color: hsl(var(--muted-foreground));
+          cursor: pointer;
+        }
+        .modal-body {
+          position: relative;
+          flex: 1 1 auto;
+          padding: 0 !important;
+          height: 600px !important;
+          background: hsl(var(--background)) !important;
+        }
+        .modal-body iframe {
+          width: 100% !important;
+          height: 100% !important;
+          border: none !important;
+          border-radius: 0 0 16px 16px !important;
+        }
+      `}</style>
+
+      {/* Immersive secure gateway redirect overlay */}
+      {placing && paymentMethod === 'iveri' && (
+        <div className="fixed inset-0 bg-background/95 backdrop-blur-md z-50 flex flex-col items-center justify-center text-center p-6 animate-in fade-in duration-300">
+          <div className="relative mb-6">
+            <div className="h-16 w-16 rounded-full border-4 border-primary/20 border-t-primary animate-spin" />
+            <Shield className="h-8 w-8 text-primary absolute inset-0 m-auto animate-pulse" />
+          </div>
+          <h2 className="text-2xl font-bold mb-2">Connecting to Secure Gateway</h2>
+          <p className="text-muted-foreground max-w-sm text-sm mb-1">
+            Loading secure payment interface inside a pop-up dialog. Please do not refresh this page.
+          </p>
+          <p className="text-xs text-primary/80 font-medium animate-pulse">Your session is encrypted.</p>
+        </div>
+      )}
       <Header />
       <CartDrawer />
 
@@ -270,15 +553,54 @@ const CheckoutPage = () => {
                 </RadioGroup>
               </section>
 
-              {/* Payment – placeholder */}
-              <section className="rounded-xl border border-border p-6">
-                <h2 className="text-lg font-semibold mb-2 flex items-center gap-2">
+              {/* Secure Payment Selector */}
+              <section className="rounded-xl border border-border p-6 space-y-4">
+                <h2 className="text-lg font-semibold flex items-center gap-2">
                   <CreditCard className="h-5 w-5 text-primary" />
-                  Payment
+                  Payment Method
                 </h2>
-                <p className="text-sm text-muted-foreground">
-                  Payment will be collected upon delivery or at pickup.
-                </p>
+                
+                <RadioGroup 
+                  value={paymentMethod} 
+                  onValueChange={(val) => setPaymentMethod(val as 'cash' | 'iveri')} 
+                  className="grid grid-cols-1 sm:grid-cols-2 gap-4"
+                >
+                  <label
+                    className={`flex items-start justify-between rounded-lg border p-4 cursor-pointer transition-all duration-200 ${
+                      paymentMethod === 'cash' 
+                        ? 'border-primary bg-primary/5 shadow-sm' 
+                        : 'border-border hover:border-primary/30 hover:bg-secondary/30'
+                    }`}
+                  >
+                    <div className="flex items-start gap-3">
+                      <RadioGroupItem value="cash" className="mt-1" />
+                      <div>
+                        <p className="font-semibold text-sm">Pay on Delivery</p>
+                        <p className="text-xs text-muted-foreground mt-1 leading-relaxed">
+                          Pay cash or swap card on delivery/pickup.
+                        </p>
+                      </div>
+                    </div>
+                  </label>
+                  
+                  <label
+                    className={`flex items-start justify-between rounded-lg border p-4 cursor-pointer transition-all duration-200 ${
+                      paymentMethod === 'iveri' 
+                        ? 'border-primary bg-primary/5 shadow-sm' 
+                        : 'border-border hover:border-primary/30 hover:bg-secondary/30'
+                    }`}
+                  >
+                    <div className="flex items-start gap-3">
+                      <RadioGroupItem value="iveri" className="mt-1" />
+                      <div>
+                        <p className="font-semibold text-sm">Secure Online Card</p>
+                        <p className="text-xs text-muted-foreground mt-1 leading-relaxed">
+                          Pay instantly via iVeri / Nedbank gateway.
+                        </p>
+                      </div>
+                    </div>
+                  </label>
+                </RadioGroup>
               </section>
             </div>
 

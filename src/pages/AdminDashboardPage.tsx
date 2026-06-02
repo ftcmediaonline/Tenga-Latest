@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button';
 import { useAuth } from '@/hooks/useAuth';
 import { useToast } from '@/hooks/use-toast';
 import { supabase } from '@/integrations/supabase/client';
+import { sendTransactionalEmail } from '@/utils/emailService';
 import type { Tables } from '@/integrations/supabase/types';
 import { Store, Check, X, ShieldAlert, Loader2, Users, Shield, Trash2, ExternalLink, TrendingUp, Truck, Package, Plus, MessageCircle, Mail, Send, Search, DollarSign, ClipboardList } from 'lucide-react';
 import {
@@ -435,13 +436,14 @@ const AdminDashboardPage = () => {
       setPendingShops((prev) => prev.filter((s) => s.id !== shop.id));
       setAllShops((prev) => prev.map((s) => (s.id === shop.id ? { ...s, is_verified: true } : s)));
       toast({ title: 'Shop approved', description: `${shop.name} is now live.` });
-      const { error: emailError } = await supabase.functions.invoke('send-email', {
-        body: { action: 'shop-approved', shop_id: shop.id },
+      const { success, error: emailError } = await sendTransactionalEmail({
+        action: 'shop-approved',
+        shop_id: shop.id,
       });
-      if (emailError) {
+      if (!success && emailError) {
         toast({
           title: 'Approval email not sent',
-          description: emailError.message,
+          description: emailError,
           variant: 'destructive',
         });
       }
@@ -522,13 +524,14 @@ const AdminDashboardPage = () => {
     }
     setAdminPromoSending(true);
     try {
-      const { data, error } = await supabase.functions.invoke('send-email', {
-        body: { action: 'admin-promo-store-owners', subject, body, tier: adminPromoTier },
+      const result = await sendTransactionalEmail({
+        action: 'admin-promo-store-owners',
+        subject,
+        body,
+        tier: adminPromoTier,
       });
-      if (error) throw error;
-      const sent = (data as { sent?: number })?.sent ?? 0;
-      const msg = (data as { message?: string })?.message ?? `Sent to ${sent} store owner(s).`;
-      toast({ title: 'Email sent', description: msg });
+      if (!result.success && result.error) throw new Error(result.error);
+      toast({ title: 'Email sent', description: 'Promotional announcement sent to store owners.' });
       setAdminPromoSubject('');
       setAdminPromoBody('');
     } catch (err) {

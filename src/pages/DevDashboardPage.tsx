@@ -24,6 +24,8 @@ import {
   Package,
   Compass,
   Star,
+  Mail,
+  Trash2,
 } from 'lucide-react';
 
 type TableStat = { table: string; count: number };
@@ -52,6 +54,20 @@ const DevDashboardPage = () => {
   const [featuredShopsLoading, setFeaturedShopsLoading] = useState(true);
   const [togglingFeaturedId, setTogglingFeaturedId] = useState<string | null>(null);
   const { toast } = useToast();
+  const [sandboxEmails, setSandboxEmails] = useState<any[]>([]);
+
+  useEffect(() => {
+    if (isDev) {
+      const emails = JSON.parse(localStorage.getItem('tenga_sent_emails') || '[]');
+      setSandboxEmails(emails);
+    }
+  }, [isDev]);
+
+  const handleClearEmails = () => {
+    localStorage.removeItem('tenga_sent_emails');
+    setSandboxEmails([]);
+    toast({ title: 'Sandbox cleared', description: 'All simulated email logs have been removed.' });
+  };
 
   useEffect(() => {
     if (!authLoading && !user) {
@@ -295,7 +311,7 @@ const DevDashboardPage = () => {
         </div>
 
         <Tabs defaultValue="overview" className="space-y-6">
-          <TabsList className="grid w-full grid-cols-2 sm:grid-cols-5 h-auto gap-1 p-1">
+          <TabsList className="grid w-full grid-cols-2 sm:grid-cols-6 h-auto gap-1 p-1">
             <TabsTrigger value="overview" className="flex items-center gap-1.5 py-2">
               <Server className="h-4 w-4 shrink-0" />
               Overview
@@ -315,6 +331,10 @@ const DevDashboardPage = () => {
             <TabsTrigger value="database" className="flex items-center gap-1.5 py-2">
               <Database className="h-4 w-4 shrink-0" />
               Database
+            </TabsTrigger>
+            <TabsTrigger value="email-sandbox" className="flex items-center gap-1.5 py-2">
+              <Mail className="h-4 w-4 shrink-0" />
+              Email Sandbox
             </TabsTrigger>
           </TabsList>
 
@@ -627,6 +647,126 @@ const DevDashboardPage = () => {
           </CardContent>
         </Card>
 
+          </TabsContent>
+
+          <TabsContent value="email-sandbox" className="space-y-6">
+            <Card>
+              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                <div>
+                  <CardTitle className="flex items-center gap-2">
+                    <Mail className="h-5 w-5" />
+                    Transactional Email Sandbox
+                  </CardTitle>
+                  <p className="text-sm text-muted-foreground mt-1">
+                    Visual simulator logs for local verification and mock transactional email flows.
+                  </p>
+                </div>
+                {sandboxEmails.length > 0 && (
+                  <Button variant="destructive" size="sm" onClick={handleClearEmails}>
+                    <Trash2 className="h-4 w-4 mr-1.5" />
+                    Clear Logs
+                  </Button>
+                )}
+              </CardHeader>
+              <CardContent className="pt-4">
+                {sandboxEmails.length === 0 ? (
+                  <div className="flex flex-col items-center justify-center py-12 text-center border border-dashed rounded-lg border-muted bg-muted/20">
+                    <Mail className="h-12 w-12 text-muted-foreground mb-3 opacity-60" />
+                    <h3 className="font-semibold text-lg">No simulated emails yet</h3>
+                    <p className="text-sm text-muted-foreground max-w-sm mt-1">
+                      Complete a checkout, register a new shop, or broadcast an email campaign to populate sandbox logs.
+                    </p>
+                  </div>
+                ) : (
+                  <div className="space-y-4">
+                    {sandboxEmails.map((email: any) => (
+                      <div
+                        key={email.id}
+                        className="p-4 border rounded-lg border-border bg-card/50 flex flex-col gap-2.5 transition-all hover:bg-card"
+                      >
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs font-semibold px-2 py-0.5 rounded bg-primary/10 text-primary uppercase">
+                              {email.action.replace('-', ' ')}
+                            </span>
+                            <span className="text-xs text-muted-foreground">
+                              {new Date(email.timestamp).toLocaleString()}
+                            </span>
+                          </div>
+                          <span className="text-xs font-mono text-destructive bg-destructive/5 px-2 py-0.5 rounded border border-destructive/10">
+                            Fallback trigger: Local Sandbox ({email.error?.slice(0, 30)}...)
+                          </span>
+                        </div>
+
+                        <div className="text-sm">
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 text-xs">
+                            {email.email && (
+                              <div>
+                                <strong className="text-muted-foreground">Recipient Email:</strong> {email.email}
+                              </div>
+                            )}
+                            {email.customerName && (
+                              <div>
+                                <strong className="text-muted-foreground">Customer:</strong> {email.customerName}
+                              </div>
+                            )}
+                            {email.shopName && (
+                              <div>
+                                <strong className="text-muted-foreground">Shop Name:</strong> {email.shopName}
+                              </div>
+                            )}
+                            {email.orderNumber && (
+                              <div>
+                                <strong className="text-muted-foreground">Order #:</strong> {email.orderNumber}
+                              </div>
+                            )}
+                            {email.total !== undefined && (
+                              <div>
+                                <strong className="text-muted-foreground">Total Paid:</strong> ${email.total.toFixed(2)}
+                              </div>
+                            )}
+                            {email.subject && (
+                              <div className="sm:col-span-2">
+                                <strong className="text-muted-foreground">Subject:</strong> {email.subject}
+                              </div>
+                            )}
+                          </div>
+
+                          {email.items && email.items.length > 0 && (
+                            <div className="mt-3 border rounded-lg overflow-hidden bg-muted/30">
+                              <table className="w-full text-[11px] text-left border-collapse">
+                                <thead>
+                                  <tr className="bg-muted text-muted-foreground border-b border-border">
+                                    <th className="px-3 py-1.5 font-medium">Item Name</th>
+                                    <th className="px-3 py-1.5 font-medium text-center">Qty</th>
+                                    <th className="px-3 py-1.5 font-medium text-right">Price</th>
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {email.items.map((item: any, idx: number) => (
+                                    <tr key={idx} className="border-b border-border last:border-0">
+                                      <td className="px-3 py-1.5 font-medium">{item.name}</td>
+                                      <td className="px-3 py-1.5 text-center">{item.qty}</td>
+                                      <td className="px-3 py-1.5 text-right">${item.price.toFixed(2)}</td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
+                          )}
+
+                          {email.body && (
+                            <div className="mt-3 p-3 rounded-lg bg-muted/40 border border-border text-xs max-h-40 overflow-y-auto whitespace-pre-wrap font-mono">
+                              {email.body}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
           </TabsContent>
         </Tabs>
 

@@ -6,7 +6,8 @@ export type EmailAction =
   | 'order-confirmation'
   | 'shop-approved'
   | 'promotional-email'
-  | 'admin-promo-store-owners';
+  | 'admin-promo-store-owners'
+  | 'welcome-newsletter';
 
 export interface EmailParams {
   action: EmailAction;
@@ -67,7 +68,8 @@ function showDeveloperFallback(params: EmailParams, errorReason: string) {
     'order-confirmation': 'Order Confirmation Receipt',
     'shop-approved': 'Shop Approval Notification',
     'promotional-email': 'Seller Promotion Broadcast',
-    'admin-promo-store-owners': 'Admin Store Owner Announcement'
+    'admin-promo-store-owners': 'Admin Store Owner Announcement',
+    'welcome-newsletter': 'Welcome Newsletter Coupon'
   };
 
   const recipient = params.email || 'Shop Owner / Followers';

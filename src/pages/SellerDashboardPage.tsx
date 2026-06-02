@@ -20,6 +20,7 @@ import { cn } from '@/lib/utils';
 import { useAuth } from '@/hooks/useAuth';
 import { useToast } from '@/hooks/use-toast';
 import { supabase } from '@/integrations/supabase/client';
+import { sendTransactionalEmail } from '@/utils/emailService';
 import type { Tables } from '@/integrations/supabase/types';
 import {
   Package,
@@ -169,13 +170,15 @@ const SellerDashboardPage = () => {
     }
     setPromoSending(true);
     try {
-      const { data, error } = await supabase.functions.invoke('send-email', {
-        body: { action: 'promotional-email', shop_id: shop.id, subject, body, audience: promoAudience },
+      const result = await sendTransactionalEmail({
+        action: 'promotional-email',
+        shop_id: shop.id,
+        subject,
+        body,
+        audience: promoAudience,
       });
-      if (error) throw error;
-      const sent = (data as { sent?: number })?.sent ?? 0;
-      const msg = (data as { message?: string })?.message ?? `Sent to ${sent} recipient(s).`;
-      toast({ title: 'Promotional email sent', description: msg });
+      if (!result.success && result.error) throw new Error(result.error);
+      toast({ title: 'Promotional email sent', description: 'Your email campaign has been broadcasted.' });
       setPromoSubject('');
       setPromoBody('');
     } catch (err) {
