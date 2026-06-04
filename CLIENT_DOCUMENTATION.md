@@ -18,11 +18,11 @@ Tenga is a **virtual mall**: one place where shoppers discover multiple shops an
 | **Browse** | Open **Shops** or **Categories**, click into a shop or product to see details, images, variants, and reviews. |
 | **Save & follow** | Add products to **Wishlist** and **follow** shops they like. |
 | **Cart** | Add items to the cart (with variants when available). Open the cart drawer to change quantity or remove items. |
-| **Checkout** | Go to **Checkout**, enter shipping and contact details, choose shipping method. Place order and see **Order Confirmation**. |
+| **Checkout** | Go to **Checkout**, enter shipping and contact details, choose shipping method and **payment method** (secure **iVeri** card/mobile pay, or **pay on delivery/pickup**). Place order and see **Order Confirmation**. |
 | **Orders** | View **Order History** and order status. |
 | **Account** | Sign up / sign in (**Auth**). Manage **Profile** and see **Following** (shops they follow). |
 
-So far, **payment at checkout is not yet connected** to a bank or payment gateway: the flow captures the order and shipping details; payment is currently described as “collected upon delivery or at pickup” (placeholder).
+**Online payment** uses the **iVeri Lite** gateway (CBZ-hosted): shoppers can pay by card or local wallets in a secure popup. **Pay on delivery/pickup** remains available for customers who prefer cash. Order emails are sent after card payment (webhook + confirmation) or immediately for cash orders.
 
 ---
 
@@ -84,16 +84,19 @@ The following reflects what is **built and working** in the current codebase, ma
 
 ---
 
-### Week 3 — Monetization & Bank API (Partial) ⚠️
+### Week 3 — Monetization & Payments (Mostly done) ✅ / ⚠️
 
 | Delivered | Status |
 |-----------|--------|
-| **Checkout UI** | Checkout page built: cart summary, shipping/contact form (validation), shipping method selection, order total. **Place order** creates an order in the database and redirects to Order Confirmation. |
-| **Order management** | Orders stored with order number, customer and shipping details. Shoppers see **Order History**; sellers see orders in the **Seller Dashboard** and can update status. |
-| **Pricing page** | Pricing tiers (Basic / Premium / Enterprise) and commission structure (e.g. 2% / 1.5% / 1%) are **designed and displayed**; no automated billing yet. |
-| **Bank API integration** | **Not implemented.** No handshake, no payment processing, no commission/payout logic, no subscription billing, no bank webhooks. |
+| **Checkout UI** | Cart summary, shipping/contact validation, shipping method, **payment method choice** (iVeri vs pay on delivery). |
+| **iVeri gateway** | `iveri-gateway` Edge Function: SHA-256 Lite token, LiteBox modal checkout, webhook updates `payment_status`, order confirmation emails. |
+| **Cash on delivery** | Orders with `payment_method: cash_on_delivery`; pay when delivered or at pickup. |
+| **Order management** | Orders include `payment_status` and `payment_method`; visible on **Order History** and **Seller Dashboard**. |
+| **Pricing page** | Tiers and commission rates displayed; **automated subscription billing not yet live**. |
+| **Commission & payout** | **Not implemented** — no server-side split or vendor payouts yet. |
+| **Subscription “rent”** | **Not implemented** — recurring shop fees still to do. |
 
-So: **shopping and order flow work end-to-end except real payment**; money movement and subscription “rent” are still to do.
+**Remaining for money:** production iVeri merchant credentials, webhook registered with iVeri, commission/payout automation, subscription billing, and live E2E payment testing.
 
 ---
 
@@ -130,10 +133,10 @@ These items are **outstanding** to reach the full vision described in the develo
 
 | # | Item | Notes |
 |---|------|--------|
-| 1 | **Bank API integration** | Secure handshake and session with the bank API; credentials via env/secrets, never stored in the app. |
-| 2 | **Payment at checkout** | Replace “payment on delivery/pickup” with real payment (e.g. redirect or embedded flow) using the Bank API or chosen payment provider. |
-| 3 | **Commission & payout logic** | Server-side (e.g. Supabase Edge Functions) calculation of Tenga’s commission and vendor share; store split amounts with the transaction; avoid rounding errors (e.g. work in cents). |
-| 4 | **Transaction confirmation** | When the bank confirms payment (e.g. via webhook), update order status and optionally notify user/seller; target &lt; 2s from confirmation to UI update (e.g. using Supabase Realtime). |
+| 1 | **Production iVeri setup** | Live `IVERI_*` secrets in Supabase; webhook URL registered; sandbox → production cutover. |
+| 2 | **Commission & payout logic** | Server-side calculation of Tenga commission and vendor share; store split amounts; work in cents. |
+| 3 | **Realtime payment UI** | Optional Supabase Realtime on `payment_status` so order pages update without refresh. |
+| 4 | **E2E payment testing** | Full test: card pay, webhook, email, seller sees `paid` status. |
 | 5 | **Subscription billing (“rent”)** | Recurring billing for shop subscriptions (e.g. Basic/Premium) via Bank API; handle failed payments and retries; notify vendors. |
 
 ---
@@ -165,11 +168,11 @@ These items are **outstanding** to reach the full vision described in the develo
 | **Design & frontend** | Landing, components, routing, responsive layout, animations | Optional extra polish |
 | **Auth & users** | Sign up, login, logout, roles (user/seller/admin), dev access (`is_dev`) | — |
 | **Shops & products** | Open Shop, approval, product CRUD, images, categories | Vendor onboarding tutorial |
-| **Shopping** | Browse, search, cart, wishlist, follow shops, checkout UI, order creation; Discover + Featured curation (Dev panel) | **Real payment** |
-| **Orders** | Create order, order history, seller order list, status updates | **Payment confirmation & webhooks** |
+| **Shopping** | Browse, search, cart, wishlist, follow shops, checkout with iVeri + COD; Discover + Featured curation (Dev panel) | Production iVeri credentials |
+| **Orders** | Order history, seller list, fulfillment status, **payment status badges** | Realtime payment updates (optional) |
 | **Admin** | Performance stats at a glance, approve/reject shops, users/shops/orders/products/messages/promotions, role management, trending toggles | — |
 | **Dev panel** | Discover/Featured curation, dev access management, database stats, RPCs for discover + featured | — |
-| **Money** | Pricing page, commission tiers (display only) | **Bank API, payments, commission/payout, subscription billing** |
+| **Money** | iVeri checkout, COD, pricing page | **Commission/payout, subscription billing** |
 | **Launch** | Build, preview, docs | **Deploy, E2E, launch materials** |
 
 ---

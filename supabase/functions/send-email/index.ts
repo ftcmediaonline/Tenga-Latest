@@ -306,16 +306,27 @@ type AuthContext = {
   supabaseAnonKey: string;
   supabaseServiceKey: string;
   authHeader: string;
-  user: { id: string };
+  user: { id: string } | null;
 };
 
-async function requireUser(req: Request): Promise<AuthContext | Response> {
+function getAuthEnv() {
+  return {
+    supabaseUrl: Deno.env.get("SUPABASE_URL")!,
+    supabaseAnonKey: Deno.env.get("SUPABASE_ANON_KEY")!,
+    supabaseServiceKey: Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
+  };
+}
+
+/** Service role (e.g. iVeri webhook) or signed-in user. */
+async function requireUserOrService(req: Request): Promise<AuthContext | Response> {
   const authHeader = req.headers.get("Authorization");
   if (!authHeader) return jsonResponse({ error: "Missing authorization" }, 401);
 
-  const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
-  const supabaseAnonKey = Deno.env.get("SUPABASE_ANON_KEY")!;
-  const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+  const { supabaseUrl, supabaseAnonKey, supabaseServiceKey } = getAuthEnv();
+  const token = authHeader.replace(/^Bearer\s+/i, "").trim();
+  if (token && token === supabaseServiceKey) {
+    return { supabaseUrl, supabaseAnonKey, supabaseServiceKey, authHeader, user: null };
+  }
 
   const supabaseAuth = createClient(supabaseUrl, supabaseAnonKey, {
     global: { headers: { Authorization: authHeader } },
@@ -326,7 +337,15 @@ async function requireUser(req: Request): Promise<AuthContext | Response> {
   return { supabaseUrl, supabaseAnonKey, supabaseServiceKey, authHeader, user };
 }
 
+async function requireUser(req: Request): Promise<AuthContext | Response> {
+  const auth = await requireUserOrService(req);
+  if (auth instanceof Response) return auth;
+  if (!auth.user) return jsonResponse({ error: "Unauthorized" }, 401);
+  return auth;
+}
+
 async function requireAdmin(ctx: AuthContext): Promise<Response | null> {
+  if (!ctx.user) return jsonResponse({ error: "Forbidden: admin only" }, 403);
   const supabaseAdmin = createClient(ctx.supabaseUrl, ctx.supabaseServiceKey);
   const { data: profile } = await supabaseAdmin
     .from("profiles")
@@ -342,6 +361,7 @@ async function requireAdmin(ctx: AuthContext): Promise<Response | null> {
 type OrderItem = { name: string; qty: number; price: number };
 
 async function handleShopConfirmation(ctx: AuthContext, body: Record<string, unknown>): Promise<Response> {
+  if (!ctx.user) return jsonResponse({ error: "Unauthorized" }, 401);
   const email = typeof body.email === "string" ? body.email.trim() : "";
   const shopName = typeof body.shopName === "string" ? body.shopName.trim() : "";
 
@@ -898,7 +918,10 @@ Deno.serve(async (req: Request) => {
       }, 400);
     }
 
-    const auth = await requireUser(req);
+    const auth =
+      action === "order-confirmation"
+        ? await requireUserOrService(req)
+        : await requireUser(req);
     if (auth instanceof Response) return auth;
 
     switch (action) {

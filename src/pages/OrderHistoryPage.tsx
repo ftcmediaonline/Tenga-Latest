@@ -11,6 +11,7 @@ import { useAuth } from '@/hooks/useAuth';
 import { supabase } from '@/integrations/supabase/client';
 import type { Tables } from '@/integrations/supabase/types';
 import { cn } from '@/lib/utils';
+import { PaymentStatusBadge } from '@/components/orders/PaymentStatusBadge';
 
 type OrderRow = Tables<'orders'> & {
   order_items?: (Tables<'order_items'> & { products?: { name: string; slug: string } | null })[];
@@ -187,6 +188,11 @@ const OrderHistoryPage = () => {
                             {order.status ?? 'pending'}
                           </span>
                         </div>
+                        <PaymentStatusBadge
+                          paymentStatus={order.payment_status}
+                          paymentMethod={order.payment_method}
+                          className="mt-2"
+                        />
                         {order.shops?.name && (
                           <p className="text-sm text-muted-foreground mt-1">
                             From {order.shops.name}

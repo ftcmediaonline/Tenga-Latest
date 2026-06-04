@@ -21,6 +21,7 @@ import { useAuth } from '@/hooks/useAuth';
 import { useToast } from '@/hooks/use-toast';
 import { supabase } from '@/integrations/supabase/client';
 import { sendTransactionalEmail } from '@/utils/emailService';
+import { PaymentStatusBadge } from '@/components/orders/PaymentStatusBadge';
 import type { Tables } from '@/integrations/supabase/types';
 import {
   Package,
@@ -735,6 +736,10 @@ const SellerDashboardPage = () => {
                               {order.status ?? 'pending'}
                             </span>
                           </div>
+                          <PaymentStatusBadge
+                            paymentStatus={order.payment_status}
+                            paymentMethod={order.payment_method}
+                          />
                           {(orderWithTracking.tracking_carrier || orderWithTracking.tracking_number) && (
                             <p className="text-xs text-muted-foreground">
                               {orderWithTracking.tracking_carrier && <span>Carrier: {orderWithTracking.tracking_carrier}</span>}

@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
-import { ArrowLeft, ShoppingBag, Minus, Plus, X, Truck, Shield, CreditCard, Loader2 } from 'lucide-react';
+import { ArrowLeft, ShoppingBag, Minus, Plus, X, Truck, Shield, CreditCard, Loader2, Banknote } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -30,6 +30,7 @@ const addressSchema = z.object({
 });
 
 type AddressForm = z.infer<typeof addressSchema>;
+type PaymentMethod = 'iveri' | 'cod';
 
 const CheckoutPage = () => {
   const navigate = useNavigate();
@@ -37,7 +38,7 @@ const CheckoutPage = () => {
   const { user } = useAuth();
   const { items, removeFromCart, updateQuantity, totalPrice, totalItems, clearCart } = useCart();
   const [shippingMethod, setShippingMethod] = useState('standard');
-  const [paymentMethod, setPaymentMethod] = useState<'cash' | 'iveri'>('cash');
+  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('iveri');
   const [placing, setPlacing] = useState(false);
   const [errors, setErrors] = useState<Partial<Record<keyof AddressForm, string>>>({});
   const [form, setForm] = useState<AddressForm>({
@@ -62,7 +63,12 @@ const CheckoutPage = () => {
     }
   };
 
-  const triggerLiteBoxPayment = (gatewayUrl: string, formFields: Record<string, string>, addressData: AddressForm) => {
+  const triggerLiteBoxPayment = (
+    gatewayUrl: string,
+    formFields: Record<string, string>,
+    addressData: AddressForm,
+    orderNumber: string,
+  ) => {
     // Extract base URL (e.g. https://portal.host.iveri.com)
     const urlObj = new URL(gatewayUrl);
     const portalUrl = `${urlObj.protocol}//${urlObj.host}`;
@@ -125,7 +131,7 @@ const CheckoutPage = () => {
         if (!(window as any).$) {
           await loadScript('https://code.jquery.com/jquery-3.6.0.min.js');
         }
-        
+
         const $ = (window as any).$;
 
         // 2. Load Bootstrap JS bundle (with Popper) dynamically to avoid bloating regular page load
@@ -135,7 +141,7 @@ const CheckoutPage = () => {
         await loadScript(`${portalUrl}/scripts/jquery/js/jquery.litebox.js`);
 
         // 4. Bind complete callback event
-        (window as any).liteboxComplete = (data: any) => {
+        (window as any).liteboxComplete = async (data: any) => {
           console.log('[iVeri LiteBox] Payment Complete Callback:', data);
           setPlacing(false);
 
@@ -145,18 +151,32 @@ const CheckoutPage = () => {
               title: '🎉 Payment Successful!',
               description: 'Your order has been authorized successfully.',
             });
-            clearCart();
-            // Redirect to confirmation page
-            const confirmationState = {
-              orderNumber: formFields.Ecom_ConsumerOrderID,
-              items: items.map(i => ({ name: i.product.name, qty: i.quantity, price: i.product.price, image: i.product.images[0] })),
-              shippingAddress: addressData,
+            const confirmedOrderNumber = formFields.Ecom_ConsumerOrderID || orderNumber;
+            await sendTransactionalEmail({
+              action: 'order-confirmation',
+              email: addressData.email,
+              customerName: `${addressData.firstName} ${addressData.lastName}`.trim(),
+              orderNumber: confirmedOrderNumber,
               shippingMethod,
-              shippingCost,
-              subtotal: totalPrice,
               total: orderTotal,
-            };
-            navigate('/order-confirmation', { state: confirmationState });
+              items: items.map((i) => ({
+                name: i.product.name,
+                qty: i.quantity,
+                price: Number(i.product.price),
+              })),
+            });
+            clearCart();
+            navigate('/order-confirmation', {
+              state: {
+                orderNumber: confirmedOrderNumber,
+                items: items.map(i => ({ name: i.product.name, qty: i.quantity, price: i.product.price, image: i.product.images[0] })),
+                shippingAddress: addressData,
+                shippingMethod,
+                shippingCost,
+                subtotal: totalPrice,
+                total: orderTotal,
+              },
+            });
           } else {
             toast({
               title: 'Payment Declined',
@@ -223,10 +243,10 @@ const CheckoutPage = () => {
     // --- CASE 1: ONLINE CARD / MOBILE PAYMENT VIA IVERI (NEDBANK LITEBOX MODAL) ---
     if (paymentMethod === 'iveri') {
       if (!user) {
-        toast({ 
-          title: 'Account Required', 
-          description: 'Please sign in to complete secure online card payments.', 
-          variant: 'destructive' 
+        toast({
+          title: 'Account Required',
+          description: 'Please sign in to complete secure online card payments.',
+          variant: 'destructive'
         });
         return;
       }
@@ -234,7 +254,7 @@ const CheckoutPage = () => {
       setPlacing(true);
       try {
         console.log('[iVeri] Initializing LiteBox payment for order:', orderNumber);
-        
+
         const { data, error } = await supabase.functions.invoke('iveri-gateway', {
           body: {
             items,
@@ -255,10 +275,9 @@ const CheckoutPage = () => {
           return;
         }
 
-        const { gatewayUrl, formFields } = data;
-        
-        // Launch the highly aesthetic and premium iVeri LiteBox Popup Modal!
-        triggerLiteBoxPayment(gatewayUrl, formFields, result.data);
+        const { gatewayUrl, formFields, orderNumber: gatewayOrderNumber } = data;
+
+        triggerLiteBoxPayment(gatewayUrl, formFields, result.data, gatewayOrderNumber);
         return;
       } catch (err) {
         console.error('[iVeri] Direct connection failure:', err);
@@ -272,9 +291,18 @@ const CheckoutPage = () => {
       }
     }
 
-    // --- CASE 2: OFFLINE PAYMENT (CASH ON DELIVERY / PICKUP) ---
-    if (user) {
-      setPlacing(true);
+    // --- CASE 2: CASH ON DELIVERY / PAY ON PICKUP ---
+    if (!user) {
+      toast({
+        title: 'Account required',
+        description: 'Please sign in to place an order.',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    setPlacing(true);
+    {
       const byShop = new Map<string, typeof items>();
       for (const item of items) {
         const sid = item.shop.id;
@@ -348,6 +376,15 @@ const CheckoutPage = () => {
     clearCart();
     navigate('/order-confirmation', { state: confirmationState });
   };
+
+  const placeOrderLabel =
+    paymentMethod === 'iveri'
+      ? placing
+        ? 'Opening secure payment…'
+        : 'Pay securely'
+      : placing
+        ? 'Placing order…'
+        : 'Place order';
 
   if (items.length === 0) {
     return (
@@ -536,9 +573,8 @@ const CheckoutPage = () => {
                   ].map(opt => (
                     <label
                       key={opt.value}
-                      className={`flex items-center justify-between rounded-lg border p-4 min-h-[56px] cursor-pointer transition-colors ${
-                        shippingMethod === opt.value ? 'border-primary bg-accent' : 'border-border hover:border-primary/40'
-                      }`}
+                      className={`flex items-center justify-between rounded-lg border p-4 min-h-[56px] cursor-pointer transition-colors ${shippingMethod === opt.value ? 'border-primary bg-accent' : 'border-border hover:border-primary/40'
+                        }`}
                     >
                       <div className="flex items-center gap-3 min-w-0">
                         <RadioGroupItem value={opt.value} className="flex-shrink-0" />
@@ -553,54 +589,63 @@ const CheckoutPage = () => {
                 </RadioGroup>
               </section>
 
-              {/* Secure Payment Selector */}
+              {/* Payment method */}
               <section className="rounded-xl border border-border p-6 space-y-4">
                 <h2 className="text-lg font-semibold flex items-center gap-2">
                   <CreditCard className="h-5 w-5 text-primary" />
                   Payment Method
                 </h2>
-                
-                <RadioGroup 
-                  value={paymentMethod} 
-                  onValueChange={(val) => setPaymentMethod(val as 'cash' | 'iveri')} 
-                  className="grid grid-cols-1 sm:grid-cols-2 gap-4"
+
+                <RadioGroup
+                  value={paymentMethod}
+                  onValueChange={(v) => setPaymentMethod(v as PaymentMethod)}
+                  className="space-y-3"
                 >
                   <label
-                    className={`flex items-start justify-between rounded-lg border p-4 cursor-pointer transition-all duration-200 ${
-                      paymentMethod === 'cash' 
-                        ? 'border-primary bg-primary/5 shadow-sm' 
-                        : 'border-border hover:border-primary/30 hover:bg-secondary/30'
+                    className={`flex items-start gap-3 rounded-xl border p-4 cursor-pointer transition-colors ${
+                      paymentMethod === 'iveri' ? 'border-primary bg-primary/5' : 'border-border hover:border-primary/40'
                     }`}
                   >
-                    <div className="flex items-start gap-3">
-                      <RadioGroupItem value="cash" className="mt-1" />
-                      <div>
-                        <p className="font-semibold text-sm">Pay on Delivery</p>
-                        <p className="text-xs text-muted-foreground mt-1 leading-relaxed">
-                          Pay cash or swap card on delivery/pickup.
-                        </p>
+                    <RadioGroupItem value="iveri" className="mt-1 flex-shrink-0" />
+                    <div className="space-y-2 flex-1">
+                      <p className="font-semibold text-sm">Secure online payment (iVeri)</p>
+                      <p className="text-xs text-muted-foreground">
+                        EcoCash, OneMoney, ZimSwitch, Visa, Mastercard — via CBZ/iVeri LiteBox.
+                      </p>
+                      <div className="flex flex-wrap gap-1.5 pt-1">
+                        {['EcoCash', 'OneMoney', 'ZimSwitch', 'Visa', 'Mastercard'].map((label) => (
+                          <span key={label} className="px-2 py-0.5 rounded text-[10px] font-semibold bg-background border border-border">
+                            {label}
+                          </span>
+                        ))}
                       </div>
                     </div>
                   </label>
-                  
+
                   <label
-                    className={`flex items-start justify-between rounded-lg border p-4 cursor-pointer transition-all duration-200 ${
-                      paymentMethod === 'iveri' 
-                        ? 'border-primary bg-primary/5 shadow-sm' 
-                        : 'border-border hover:border-primary/30 hover:bg-secondary/30'
+                    className={`flex items-start gap-3 rounded-xl border p-4 cursor-pointer transition-colors ${
+                      paymentMethod === 'cod' ? 'border-primary bg-primary/5' : 'border-border hover:border-primary/40'
                     }`}
                   >
-                    <div className="flex items-start gap-3">
-                      <RadioGroupItem value="iveri" className="mt-1" />
-                      <div>
-                        <p className="font-semibold text-sm">Secure Online Card</p>
-                        <p className="text-xs text-muted-foreground mt-1 leading-relaxed">
-                          Pay instantly via iVeri / Nedbank gateway.
-                        </p>
-                      </div>
+                    <RadioGroupItem value="cod" className="mt-1 flex-shrink-0" />
+                    <div className="space-y-1">
+                      <p className="font-semibold text-sm flex items-center gap-2">
+                        <Banknote className="h-4 w-4" />
+                        Pay on delivery / pickup
+                      </p>
+                      <p className="text-xs text-muted-foreground">
+                        No card required now. Pay when your order arrives or when you collect in store.
+                      </p>
                     </div>
                   </label>
                 </RadioGroup>
+
+                {paymentMethod === 'iveri' && (
+                  <div className="flex items-center gap-2 text-xs text-muted-foreground bg-secondary/50 p-2.5 rounded-lg border border-border/40">
+                    <Shield className="h-4 w-4 text-emerald-500 flex-shrink-0" />
+                    <span>You must be signed in. A secure payment window will open after you continue.</span>
+                  </div>
+                )}
               </section>
             </div>
 
@@ -659,7 +704,7 @@ const CheckoutPage = () => {
                 </div>
 
                 <Button type="submit" disabled={placing} className="w-full h-12 bg-gradient-primary text-base font-medium">
-                  {placing ? <Loader2 className="h-5 w-5 animate-spin" /> : 'Place Order'}
+                  {placing ? <Loader2 className="h-5 w-5 animate-spin" /> : placeOrderLabel}
                 </Button>
 
                 <div className="flex items-center justify-center gap-2 text-xs text-muted-foreground">

@@ -130,6 +130,10 @@ export type Database = {
           shipping_method: string | null
           tracking_number: string | null
           tracking_carrier: string | null
+          payment_method: string | null
+          payment_status: string | null
+          iveri_transaction_id: string | null
+          iveri_transaction_token: string | null
         }
         Insert: {
           id?: string
@@ -150,6 +154,10 @@ export type Database = {
           shipping_method?: string | null
           tracking_number?: string | null
           tracking_carrier?: string | null
+          payment_method?: string | null
+          payment_status?: string | null
+          iveri_transaction_id?: string | null
+          iveri_transaction_token?: string | null
         }
         Update: {
           id?: string
@@ -170,6 +178,10 @@ export type Database = {
           shipping_method?: string | null
           tracking_number?: string | null
           tracking_carrier?: string | null
+          payment_method?: string | null
+          payment_status?: string | null
+          iveri_transaction_id?: string | null
+          iveri_transaction_token?: string | null
         }
         Relationships: [
           {

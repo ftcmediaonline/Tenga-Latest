@@ -27,8 +27,35 @@ Every call sends JSON with an **`action`** field:
 | `shop-approved` | Admin approves a shop |
 | `promotional-email` | Seller sends promo to followers/customers |
 | `admin-promo-store-owners` | Admin emails store owners |
+| `welcome-newsletter` | Home promo banner newsletter signup |
 
 Example body: `{ "action": "order-confirmation", "email": "...", "orderNumber": "...", ... }`
+
+`order-confirmation` may be called with a **user JWT** (checkout) or **service role** bearer (iVeri webhook).
+
+---
+
+## iVeri payment gateway (`iveri-gateway`)
+
+Deploy **`iveri-gateway`** alongside `send-email`.
+
+| Flow | Method | Description |
+|------|--------|-------------|
+| Initialize payment | `POST` + user JWT | Creates pending orders, returns iVeri Lite form fields + `gatewayUrl` |
+| Payment webhook | `POST ?webhook=true` | iVeri silent post; updates `payment_status`, sends order email when paid |
+
+**Secrets:** `IVERI_LITE_APPLICATION_ID`, `IVERI_LITE_SHARED_SECRET`, `IVERI_LITE_GATEWAY_URL`, `SITE_URL`, `SUPABASE_SERVICE_ROLE_KEY` (auto).
+
+**Webhook URL** (register in iVeri merchant portal):
+
+`https://YOUR_PROJECT_REF.supabase.co/functions/v1/iveri-gateway?webhook=true`
+
+**Migration:** run `supabase/migrations/20260336000000_add_iveri_payment_columns.sql` for `payment_method`, `payment_status`, `iveri_transaction_*` on `orders`.
+
+```bash
+npx supabase functions deploy iveri-gateway
+npx supabase functions deploy send-email
+```
 
 ---
 

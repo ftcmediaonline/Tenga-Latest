@@ -171,8 +171,8 @@ Deno.serve(async (req) => {
 
           console.log("[iVeri Webhook] Triggering order confirmation email for", order.customer_email);
 
-          // Invoke oursend-email Edge Function
           await supabaseAdmin.functions.invoke("send-email", {
+            headers: { Authorization: `Bearer ${supabaseServiceKey}` },
             body: {
               action: "order-confirmation",
               email: order.customer_email,
