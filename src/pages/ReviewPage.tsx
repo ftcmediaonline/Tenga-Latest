@@ -216,7 +216,7 @@ const ReviewPage = () => {
       <CartDrawer />
 
       {/* Back Button */}
-      <div className="container py-4">
+      <div className="container py-4 px-4 sm:px-6">
         <Button variant="ghost" size="sm" asChild>
           <Link to={`/product/${product.slug}`}>
             <ChevronLeft className="h-4 w-4 mr-1" />
@@ -225,7 +225,7 @@ const ReviewPage = () => {
         </Button>
       </div>
 
-      <div className="container pb-12">
+      <div className="container pb-12 px-4 sm:px-6">
         {/* Product Summary */}
         <motion.div
           initial={{ opacity: 0, y: 20 }}

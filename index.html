@@ -30,6 +30,17 @@
     <meta name="twitter:description" content="Your favorite shops, all in one place" />
     <meta name="twitter:image" content="%SITE_URL%/og-image.png" />
     <meta name="twitter:image:alt" content="Tenga — Your favorite shops, all in one place" />
+    <!-- Frame-busting for iVeri LiteBox redirects -->
+    <script>
+      (function() {
+        if (window !== window.parent) {
+          var search = window.location.search;
+          if (search.indexOf('order=') !== -1 && search.indexOf('nonce=') !== -1) {
+            window.parent.location.href = window.location.href;
+          }
+        }
+      })();
+    </script>
   </head>
 
   <body>

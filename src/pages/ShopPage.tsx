@@ -310,7 +310,7 @@ const ShopPage = () => {
       )}
 
       {/* Back Button (Mobile) */}
-      <div className="container py-4 md:hidden">
+      <div className="container py-4 px-4 sm:px-6 md:hidden">
         <Button asChild variant="ghost" size="sm" className="-ml-2">
           <Link to="/">
             <ChevronLeft className="h-4 w-4 mr-1" />

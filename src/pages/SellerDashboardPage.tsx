@@ -532,24 +532,24 @@ const SellerDashboardPage = () => {
         </div>
 
         <Tabs defaultValue="products" className="space-y-6">
-          <TabsList className="grid w-full max-w-3xl grid-cols-5">
-            <TabsTrigger value="products" className="flex items-center gap-2">
+          <TabsList className="flex w-full overflow-x-auto justify-start sm:grid sm:grid-cols-5 h-auto p-1 gap-1 hide-scrollbar max-w-3xl bg-muted">
+            <TabsTrigger value="products" className="flex items-center gap-2 shrink-0">
               <Package className="h-4 w-4" />
               Products
             </TabsTrigger>
-            <TabsTrigger value="orders" className="flex items-center gap-2">
+            <TabsTrigger value="orders" className="flex items-center gap-2 shrink-0">
               <ShoppingCart className="h-4 w-4" />
               Orders
             </TabsTrigger>
-            <TabsTrigger value="messages" className="flex items-center gap-2">
+            <TabsTrigger value="messages" className="flex items-center gap-2 shrink-0">
               <MessageSquare className="h-4 w-4" />
               Messages
             </TabsTrigger>
-            <TabsTrigger value="reviews" className="flex items-center gap-2">
+            <TabsTrigger value="reviews" className="flex items-center gap-2 shrink-0">
               <Star className="h-4 w-4" />
               Reviews
             </TabsTrigger>
-            <TabsTrigger value="promotions" className="flex items-center gap-2">
+            <TabsTrigger value="promotions" className="flex items-center gap-2 shrink-0">
               <Mail className="h-4 w-4" />
               Promotions
             </TabsTrigger>

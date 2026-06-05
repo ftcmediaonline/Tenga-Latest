@@ -6,6 +6,13 @@ const corsHeaders = {
   "Access-Control-Allow-Methods": "POST, GET, OPTIONS, PUT, DELETE",
 };
 
+function getCleanEnv(key: string): string {
+  const value = Deno.env.get(key);
+  if (!value) return "";
+  // Remove UTF-8 BOM (\uFEFF) and trim whitespace
+  return value.replace(/^\uFEFF/, "").trim();
+}
+
 const NONCE_FIELD = "Tenga_Checkout_Nonce";
 const DEFAULT_GATEWAY_URL = "https://portal.nedsecure.co.za/Lite/Authorise.aspx";
 
@@ -180,8 +187,8 @@ Deno.serve(async (req) => {
   const url = new URL(req.url);
   const isWebhook = url.pathname.endsWith("/webhook") || url.searchParams.get("webhook") === "true";
 
-  const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
-  const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+  const supabaseUrl = getCleanEnv("SUPABASE_URL");
+  const supabaseServiceKey = getCleanEnv("SUPABASE_SERVICE_ROLE_KEY");
   const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey);
 
   try {
@@ -244,7 +251,7 @@ Deno.serve(async (req) => {
     const authHeader = req.headers.get("Authorization");
     if (!authHeader) return json({ error: "Missing authorization header" }, 401);
 
-    const supabaseUserClient = createClient(supabaseUrl, Deno.env.get("SUPABASE_ANON_KEY")!, {
+    const supabaseUserClient = createClient(supabaseUrl, getCleanEnv("SUPABASE_ANON_KEY"), {
       global: { headers: { Authorization: authHeader } },
     });
     const { data: { user }, error: authError } = await supabaseUserClient.auth.getUser();
@@ -253,9 +260,9 @@ Deno.serve(async (req) => {
     const body = await req.json().catch(() => ({}));
     const action = typeof body.action === "string" ? body.action : "initialize";
 
-    const gatewayUrl = Deno.env.get("IVERI_LITE_GATEWAY_URL") || DEFAULT_GATEWAY_URL;
-    const rawApplicationId = Deno.env.get("IVERI_LITE_APPLICATION_ID") || "";
-    const sharedSecret = Deno.env.get("IVERI_LITE_SHARED_SECRET") || "";
+    const gatewayUrl = getCleanEnv("IVERI_LITE_GATEWAY_URL") || DEFAULT_GATEWAY_URL;
+    const rawApplicationId = getCleanEnv("IVERI_LITE_APPLICATION_ID");
+    const sharedSecret = getCleanEnv("IVERI_LITE_SHARED_SECRET");
     const applicationId = formatApplicationId(rawApplicationId || "00000000-0000-0000-0000-000000000000");
 
     // --- CONFIRM PAYMENT (after LiteBox / return URL) ---
@@ -411,7 +418,7 @@ Deno.serve(async (req) => {
       customerEmail,
     );
 
-    const siteUrl = (Deno.env.get("SITE_URL") || Deno.env.get("VITE_SITE_URL") || "https://tengavm.co.zw").replace(
+    const siteUrl = (getCleanEnv("SITE_URL") || getCleanEnv("VITE_SITE_URL") || "https://tengavm.co.zw").replace(
       /\/$/,
       "",
     );

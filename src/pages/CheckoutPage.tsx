@@ -355,6 +355,10 @@ const CheckoutPage = () => {
           merchantTrace,
         } = data;
 
+        // Clean UTF-8 BOM (\uFEFF) and whitespace from gateway URLs
+        const cleanGatewayUrl = (gatewayUrl || '').replace(/^\uFEFF/, '').trim();
+        const cleanPortalUrl = (portalUrl || '').replace(/^\uFEFF/, '').trim();
+
         const pendingOrder: IveriPendingOrder = {
           ...confirmationState,
           orderNumber: gatewayOrderNumber,
@@ -363,8 +367,8 @@ const CheckoutPage = () => {
         };
 
         triggerLiteBoxPayment(
-          gatewayUrl,
-          portalUrl,
+          cleanGatewayUrl,
+          cleanPortalUrl,
           formFields,
           result.data,
           gatewayOrderNumber,

@@ -108,7 +108,7 @@ const Header = () => {
       <div className="container flex h-14 sm:h-16 items-center justify-between gap-2 sm:gap-4 px-4 sm:px-6">
         {/* Logo */}
         <Link to="/" className="flex items-center gap-2 min-h-[44px] min-w-[44px] -ml-2 flex-shrink-0">
-          <img src={theme === 'dark' ? tengaLogoWhite : tengaLogo} alt="Tenga Virtual Mall" className="h-11 w-auto sm:h-10" />
+          <img src={theme === 'dark' ? tengaLogoWhite : tengaLogo} alt="Tenga Virtual Mall" className="h-12 w-auto sm:h-12" />
         </Link>
 
         {/* Desktop Navigation */}

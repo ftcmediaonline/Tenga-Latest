@@ -35,7 +35,7 @@ const CategoriesPage = () => {
       <Header />
       <CartDrawer />
 
-      <div className="container py-8">
+      <div className="container py-8 px-4 sm:px-6">
         {/* Header */}
         <div className="mb-8">
           <motion.h1
