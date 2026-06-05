@@ -134,6 +134,8 @@ export type Database = {
           payment_status: string | null
           iveri_transaction_id: string | null
           iveri_transaction_token: string | null
+          iveri_merchant_trace: string | null
+          checkout_nonce: string | null
         }
         Insert: {
           id?: string
@@ -158,6 +160,8 @@ export type Database = {
           payment_status?: string | null
           iveri_transaction_id?: string | null
           iveri_transaction_token?: string | null
+          iveri_merchant_trace?: string | null
+          checkout_nonce?: string | null
         }
         Update: {
           id?: string
@@ -182,6 +186,8 @@ export type Database = {
           payment_status?: string | null
           iveri_transaction_id?: string | null
           iveri_transaction_token?: string | null
+          iveri_merchant_trace?: string | null
+          checkout_nonce?: string | null
         }
         Relationships: [
           {

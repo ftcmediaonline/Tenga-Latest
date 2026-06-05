@@ -41,8 +41,10 @@ Deploy **`iveri-gateway`** alongside `send-email`.
 
 | Flow | Method | Description |
 |------|--------|-------------|
-| Initialize payment | `POST` + user JWT | Creates pending orders, returns iVeri Lite form fields + `gatewayUrl` |
-| Payment webhook | `POST ?webhook=true` | iVeri silent post; updates `payment_status`, sends order email when paid |
+| Initialize payment | `POST` `{ items, address, shippingMethod, shippingCost }` + user JWT | Creates pending orders with line items, trace, nonce; returns `formFields`, `gatewayUrl`, `portalUrl` |
+| Confirm payment | `POST` `{ action: "confirm-payment", orderNumber, checkoutNonce, litePaymentCardStatus, transactionIndex? }` + user JWT | After LiteBox / return URL; validates nonce, sets `payment_status` |
+| Verify transaction | `POST` `{ action: "verify-transaction", merchantTrace }` + user JWT | Optional AuthoriseInfo.aspx lookup |
+| Payment webhook | `POST ?webhook=true` | iVeri OOB post; updates `payment_status`, sends order email when paid |
 
 **Secrets:** `IVERI_LITE_APPLICATION_ID`, `IVERI_LITE_SHARED_SECRET`, `IVERI_LITE_GATEWAY_URL`, `SITE_URL`, `SUPABASE_SERVICE_ROLE_KEY` (auto).
 
@@ -50,7 +52,12 @@ Deploy **`iveri-gateway`** alongside `send-email`.
 
 `https://YOUR_PROJECT_REF.supabase.co/functions/v1/iveri-gateway?webhook=true`
 
-**Migration:** run `supabase/migrations/20260336000000_add_iveri_payment_columns.sql` for `payment_method`, `payment_status`, `iveri_transaction_*` on `orders`.
+**Migrations:**
+
+- `20260336000000_add_iveri_payment_columns.sql` — `payment_method`, `payment_status`, `iveri_transaction_*`
+- `20260337000000_orders_iveri_trace_nonce.sql` — `iveri_merchant_trace`, `checkout_nonce`
+
+**Lite compliance:** mandatory line items, `Lite_Merchant_Trace`, `Tenga_Checkout_Nonce`, SHA-256 token, Nedbank default gateway URL.
 
 ```bash
 npx supabase functions deploy iveri-gateway

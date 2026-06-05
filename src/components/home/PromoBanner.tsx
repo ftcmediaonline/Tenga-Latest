@@ -60,7 +60,7 @@ const PromoBanner = () => {
           title: '📧 Welcome offer simulated (Sandbox)',
           description: `You are signed out. We simulated sending the welcome offer to ${email}. Sign in to test real delivery!`,
         });
-        
+
         setLoading(false);
         setSuccess(true);
       }, 1000);

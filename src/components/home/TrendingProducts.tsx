@@ -132,17 +132,17 @@ const TrendingProducts = () => {
             <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
           </div>
         ) : (
-        <div className="flex overflow-x-auto gap-4 snap-x snap-mandatory hide-scrollbar -mx-4 px-4 pb-4 sm:grid sm:grid-cols-3 lg:grid-cols-4 sm:gap-6 sm:overflow-x-visible sm:snap-none sm:mx-0 sm:px-0 sm:pb-0">
-          {trendingProducts.map((product, index) => (
-            <ProductCard
-              key={product.id}
-              product={product}
-              shop={shopsMap[product.shopId]}
-              index={index}
-              className="w-[185px] shrink-0 snap-start sm:w-auto sm:shrink sm:snap-none"
-            />
-          ))}
-        </div>
+          <div className="flex overflow-x-auto gap-4 snap-x snap-mandatory hide-scrollbar -mx-4 px-4 pb-4 sm:grid sm:grid-cols-3 lg:grid-cols-4 sm:gap-6 sm:overflow-x-visible sm:snap-none sm:mx-0 sm:px-0 sm:pb-0">
+            {trendingProducts.map((product, index) => (
+              <ProductCard
+                key={product.id}
+                product={product}
+                shop={shopsMap[product.shopId]}
+                index={index}
+                className="w-[185px] shrink-0 snap-start sm:w-auto sm:shrink sm:snap-none"
+              />
+            ))}
+          </div>
         )}
 
         {/* Mobile CTA */}

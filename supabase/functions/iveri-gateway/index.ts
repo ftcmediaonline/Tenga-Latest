@@ -6,18 +6,13 @@ const corsHeaders = {
   "Access-Control-Allow-Methods": "POST, GET, OPTIONS, PUT, DELETE",
 };
 
+const NONCE_FIELD = "Tenga_Checkout_Nonce";
+const DEFAULT_GATEWAY_URL = "https://portal.nedsecure.co.za/Lite/Authorise.aspx";
+
 interface CartItem {
   id: string;
-  product: {
-    id: string;
-    name: string;
-    price: number;
-    images: string[];
-  };
-  shop: {
-    id: string;
-    name: string;
-  };
+  product: { id: string; name: string; price: number; images: string[] };
+  shop: { id: string; name: string };
   quantity: number;
 }
 
@@ -33,33 +28,151 @@ interface AddressForm {
   country: string;
 }
 
-// Generate the secure SHA-256 token for iVeri Lite
+function json(data: unknown, status = 200) {
+  return new Response(JSON.stringify(data), {
+    status,
+    headers: { ...corsHeaders, "Content-Type": "application/json" },
+  });
+}
+
+/** Max 20 chars for Ecom_ConsumerOrderID / MerchantReference. */
+function generateOrderNumber(): string {
+  const t = Date.now().toString(36).toUpperCase();
+  const r = Math.random().toString(36).toUpperCase().slice(2, 6);
+  return `TNG${t.slice(-8)}${r}`.slice(0, 20);
+}
+
+function generateCheckoutNonce(): string {
+  const bytes = new Uint8Array(16);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+function gatewayOrigin(gatewayUrl: string): string {
+  return new URL(gatewayUrl).origin;
+}
+
+function authoriseInfoUrl(gatewayUrl: string): string {
+  return `${gatewayOrigin(gatewayUrl)}/Lite/AuthoriseInfo.aspx`;
+}
+
+function formatApplicationId(raw: string): string {
+  let applicationId = raw.trim();
+  if (!applicationId.startsWith("{")) applicationId = `{${applicationId}}`;
+  return applicationId.toUpperCase();
+}
+
 async function generateLiteToken(
   secretKey: string,
   resource: string,
   applicationId: string,
   amountInCents: string,
-  emailAddress: string
+  emailAddress: string,
 ): Promise<string> {
   const timestamp = Math.floor(Date.now() / 1000).toString();
-
-  // Formula: secretKey + time + resource + applicationId + amount + emailAddress
   const tokenString = secretKey + timestamp + resource + applicationId + amountInCents + emailAddress;
-
-  const encoder = new TextEncoder();
-  const data = encoder.encode(tokenString);
-  const hashBuffer = await crypto.subtle.digest("SHA-256", data);
-
-  // Convert buffer to hex string
-  const hashArray = Array.from(new Uint8Array(hashBuffer));
-  const hashHex = hashArray.map(b => b.toString(16).padStart(2, "0")).join("");
-
-  // Return format timestamp:hash
+  const hashBuffer = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(tokenString));
+  const hashHex = Array.from(new Uint8Array(hashBuffer))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
   return `${timestamp}:${hashHex}`;
 }
 
+/** Mandatory Lite line items; amount in cents per unit. */
+function buildLineItemFields(
+  items: CartItem[],
+  shippingCost: number,
+): { fields: Record<string, string>; totalCents: number } {
+  const fields: Record<string, string> = {};
+  let idx = 1;
+  let totalCents = 0;
+
+  for (const item of items) {
+    const unitCents = Math.round(Number(item.product.price) * 100);
+    const lineCents = unitCents * item.quantity;
+    totalCents += lineCents;
+    fields[`Lite_Order_LineItems_Product_${idx}`] = item.product.name.slice(0, 255);
+    fields[`Lite_Order_LineItems_Quantity_${idx}`] = String(item.quantity);
+    fields[`Lite_Order_LineItems_Amount_${idx}`] = String(unitCents);
+    idx++;
+  }
+
+  if (shippingCost > 0) {
+    const shipCents = Math.round(shippingCost * 100);
+    totalCents += shipCents;
+    fields[`Lite_Order_LineItems_Product_${idx}`] = "Shipping";
+    fields[`Lite_Order_LineItems_Quantity_${idx}`] = "1";
+    fields[`Lite_Order_LineItems_Amount_${idx}`] = String(shipCents);
+  }
+
+  return { fields, totalCents };
+}
+
+function mapPaymentStatus(rawStatus: string | undefined): string {
+  if (rawStatus === "0" || rawStatus === "Success" || rawStatus === "APPROVED") return "paid";
+  if (rawStatus === "255" || rawStatus === "Error") return "error";
+  if (rawStatus !== undefined && rawStatus !== "") return "failed";
+  return "pending";
+}
+
+async function queryAuthoriseInfo(
+  gatewayUrl: string,
+  applicationId: string,
+  merchantTrace: string,
+): Promise<{ ok: boolean; rawStatus?: string; raw?: string }> {
+  const url = authoriseInfoUrl(gatewayUrl);
+  const body = new URLSearchParams({
+    Lite_Merchant_ApplicationId: applicationId,
+    Lite_Merchant_Trace: merchantTrace,
+  });
+
+  try {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body,
+    });
+    const text = await res.text();
+    const statusMatch = text.match(/Lite_Payment_Card_Status[=:]\s*([^\s<&]+)/i);
+    return { ok: res.ok, rawStatus: statusMatch?.[1], raw: text.slice(0, 500) };
+  } catch (e) {
+    console.error("[iVeri] AuthoriseInfo query failed:", e);
+    return { ok: false };
+  }
+}
+
+async function sendOrderConfirmationEmail(
+  supabaseAdmin: ReturnType<typeof createClient>,
+  supabaseServiceKey: string,
+  order: { id: string; total: number; customer_email: string; customer_name: string; shipping_method: string | null },
+  orderNumber: string,
+) {
+  const { data: itemsData } = await supabaseAdmin
+    .from("order_items")
+    .select("price, quantity, products(name)")
+    .eq("order_id", order.id);
+
+  const formattedItems = (itemsData || []).map((it: { products?: { name?: string }; quantity: number; price: number }) => ({
+    name: it.products?.name || "Product",
+    qty: it.quantity,
+    price: Number(it.price),
+  }));
+
+  await supabaseAdmin.functions.invoke("send-email", {
+    headers: { Authorization: `Bearer ${supabaseServiceKey}` },
+    body: {
+      action: "order-confirmation",
+      email: order.customer_email,
+      customerName: order.customer_name,
+      orderNumber,
+      shippingMethod: order.shipping_method,
+      total: Number(order.total),
+      items: formattedItems,
+    },
+  });
+}
+
 Deno.serve(async (req) => {
-  // Handle CORS Preflight
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
   }
@@ -67,312 +180,275 @@ Deno.serve(async (req) => {
   const url = new URL(req.url);
   const isWebhook = url.pathname.endsWith("/webhook") || url.searchParams.get("webhook") === "true";
 
-  // Setup Supabase Clients
   const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
   const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
   const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey);
 
   try {
-    // ----------------------------------------------------
-    // CASE A: WEBHOOK / SILENT POST FROM IVERI
-    // ----------------------------------------------------
+    // --- WEBHOOK / OOB ---
     if (isWebhook && req.method === "POST") {
-      console.log("[iVeri Webhook] Received status update from gateway");
-
       let payload: Record<string, string> = {};
       const contentType = req.headers.get("content-type") || "";
-
       if (contentType.includes("application/x-www-form-urlencoded")) {
         const formData = await req.formData();
-        for (const [key, value] of formData.entries()) {
-          payload[key] = String(value);
-        }
+        for (const [key, value] of formData.entries()) payload[key] = String(value);
       } else {
-        payload = await req.json();
+        payload = (await req.json()) as Record<string, string>;
       }
 
-      console.log("[iVeri Webhook] Parsed Payload:", JSON.stringify(payload, null, 2));
-
-      const orderNumber = payload["Ecom_ConsumerOrderID"] || payload["MerchantReference"] || payload["Lite_Consumer_Order_ID"];
+      const orderNumber =
+        payload["Ecom_ConsumerOrderID"] || payload["MerchantReference"] || payload["Lite_Consumer_Order_ID"];
       const rawStatus = payload["Lite_Payment_Card_Status"] || payload["Lite_Status"];
       const transactionId = payload["Lite_TransactionIndex"] || payload["Lite_BankReference"];
       const responseToken = payload["Lite_Transaction_Token"];
 
-      if (!orderNumber) {
-        return new Response(JSON.stringify({ error: "Missing order identifier" }), {
-          status: 400,
-          headers: { "Content-Type": "application/json" },
-        });
-      }
+      if (!orderNumber) return json({ error: "Missing order identifier" }, 400);
 
-      console.log(`[iVeri Webhook] Processing Order: ${orderNumber} | Raw Status: ${rawStatus} | TxID: ${transactionId}`);
+      const paymentStatus = mapPaymentStatus(rawStatus);
 
-      // Lookup existing order
       const { data: order, error: orderLookupError } = await supabaseAdmin
         .from("orders")
-        .select("id, total, customer_email, customer_name, shipping_method")
+        .select("id, total, customer_email, customer_name, shipping_method, payment_status")
         .eq("order_number", orderNumber)
         .maybeSingle();
 
-      if (orderLookupError || !order) {
-        console.error(`[iVeri Webhook] Order not found in database: ${orderNumber}`, orderLookupError);
-        return new Response(JSON.stringify({ error: "Order not found" }), {
-          status: 404,
-          headers: { "Content-Type": "application/json" },
-        });
-      }
+      if (orderLookupError || !order) return json({ error: "Order not found" }, 404);
 
-      // Map status
-      let paymentStatus = "pending";
-      if (rawStatus === "0" || rawStatus === "Success" || rawStatus === "APPROVED") {
-        paymentStatus = "paid";
-      } else if (rawStatus === "255" || rawStatus === "Error") {
-        paymentStatus = "error";
-      } else if (rawStatus !== undefined) {
-        // Any other non-zero status code indicates declined/failed authorization
-        paymentStatus = "failed";
-      }
-
-      // Update Order Table
       const { error: updateError } = await supabaseAdmin
         .from("orders")
         .update({
           payment_status: paymentStatus,
-          status: paymentStatus === "paid" ? "pending" : "cancelled", // pending fulfillment, or cancelled
+          status: paymentStatus === "paid" ? "pending" : "cancelled",
           iveri_transaction_id: transactionId,
           iveri_transaction_token: responseToken,
         })
         .eq("order_number", orderNumber);
 
-      if (updateError) {
-        console.error("[iVeri Webhook] Failed to update order status:", updateError);
-        return new Response(JSON.stringify({ error: "Database update failed" }), {
-          status: 500,
-          headers: { "Content-Type": "application/json" },
-        });
-      }
+      if (updateError) return json({ error: "Database update failed" }, 500);
 
-      console.log(`[iVeri Webhook] Database updated. Order ${orderNumber} set to payment status: ${paymentStatus}`);
-
-      // If PAID, trigger order confirmation email!
-      if (paymentStatus === "paid") {
+      if (paymentStatus === "paid" && order.payment_status !== "paid") {
         try {
-          // Fetch order items to include in the email
-          const { data: itemsData } = await supabaseAdmin
-            .from("order_items")
-            .select("price, quantity, products(name)")
-            .eq("order_id", order.id);
-
-          const formattedItems = (itemsData || []).map((it: any) => ({
-            name: it.products?.name || "Product",
-            qty: it.quantity,
-            price: Number(it.price),
-          }));
-
-          console.log("[iVeri Webhook] Triggering order confirmation email for", order.customer_email);
-
-          await supabaseAdmin.functions.invoke("send-email", {
-            headers: { Authorization: `Bearer ${supabaseServiceKey}` },
-            body: {
-              action: "order-confirmation",
-              email: order.customer_email,
-              customerName: order.customer_name,
-              orderNumber: orderNumber,
-              shippingMethod: order.shipping_method,
-              total: Number(order.total),
-              items: formattedItems,
-            },
-          });
-
-          console.log("[iVeri Webhook] Order confirmation email dispatched successfully.");
+          await sendOrderConfirmationEmail(supabaseAdmin, supabaseServiceKey, order, orderNumber);
         } catch (emailErr) {
-          console.error("[iVeri Webhook] Warning: Failed to dispatch confirmation email:", emailErr);
+          console.error("[iVeri Webhook] Email failed:", emailErr);
         }
       }
 
-      return new Response(JSON.stringify({ success: true, paymentStatus }), {
-        status: 200,
-        headers: { "Content-Type": "application/json" },
-      });
+      return json({ success: true, paymentStatus });
     }
 
-    // ----------------------------------------------------
-    // CASE B: INITIALIZE TRANSACTION (CALCULATE SECURE TOKEN)
-    // ----------------------------------------------------
-    if (req.method === "POST") {
-      // Authenticate the user
-      const authHeader = req.headers.get("Authorization");
-      if (!authHeader) {
-        return new Response(JSON.stringify({ error: "Missing authorization header" }), {
-          status: 401,
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-        });
+    if (req.method !== "POST") {
+      return json({ error: "Method not allowed" }, 405);
+    }
+
+    const authHeader = req.headers.get("Authorization");
+    if (!authHeader) return json({ error: "Missing authorization header" }, 401);
+
+    const supabaseUserClient = createClient(supabaseUrl, Deno.env.get("SUPABASE_ANON_KEY")!, {
+      global: { headers: { Authorization: authHeader } },
+    });
+    const { data: { user }, error: authError } = await supabaseUserClient.auth.getUser();
+    if (authError || !user) return json({ error: "Unauthorized" }, 401);
+
+    const body = await req.json().catch(() => ({}));
+    const action = typeof body.action === "string" ? body.action : "initialize";
+
+    const gatewayUrl = Deno.env.get("IVERI_LITE_GATEWAY_URL") || DEFAULT_GATEWAY_URL;
+    const rawApplicationId = Deno.env.get("IVERI_LITE_APPLICATION_ID") || "";
+    const sharedSecret = Deno.env.get("IVERI_LITE_SHARED_SECRET") || "";
+    const applicationId = formatApplicationId(rawApplicationId || "00000000-0000-0000-0000-000000000000");
+
+    // --- CONFIRM PAYMENT (after LiteBox / return URL) ---
+    if (action === "confirm-payment") {
+      const orderNumber = typeof body.orderNumber === "string" ? body.orderNumber.trim() : "";
+      const nonce = typeof body.checkoutNonce === "string" ? body.checkoutNonce.trim() : "";
+      const rawStatus = String(body.litePaymentCardStatus ?? "");
+      const transactionId = typeof body.transactionIndex === "string" ? body.transactionIndex : null;
+
+      if (!orderNumber || !nonce) return json({ error: "orderNumber and checkoutNonce required" }, 400);
+
+      const { data: orders, error: findErr } = await supabaseAdmin
+        .from("orders")
+        .select("id, total, customer_email, customer_name, shipping_method, payment_status, checkout_nonce, user_id")
+        .eq("order_number", orderNumber)
+        .eq("user_id", user.id);
+
+      if (findErr || !orders?.length) return json({ error: "Order not found" }, 404);
+
+      const order = orders[0];
+      if (order.checkout_nonce !== nonce) {
+        return json({ error: "Invalid checkout nonce" }, 403);
       }
 
-      const supabaseUserClient = createClient(supabaseUrl, Deno.env.get("SUPABASE_ANON_KEY")!, {
-        global: { headers: { Authorization: authHeader } },
-      });
-
-      const { data: { user }, error: authError } = await supabaseUserClient.auth.getUser();
-      if (authError || !user) {
-        return new Response(JSON.stringify({ error: "Unauthorized" }), {
-          status: 401,
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-        });
-      }
-
-      const { items, address, shippingMethod, shippingCost } = (await req.json()) as {
-        items: CartItem[];
-        address: AddressForm;
-        shippingMethod: string;
-        shippingCost: number;
-      };
-
-      if (!items || items.length === 0 || !address) {
-        return new Response(JSON.stringify({ error: "Invalid payload: items and address are required" }), {
-          status: 400,
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-        });
-      }
-
-      // Calculate totals
-      const subtotal = items.reduce((s, i) => s + i.product.price * i.quantity, 0);
-      const total = subtotal + shippingCost;
-      const orderNumber = `TNG-${Date.now().toString(36).toUpperCase()}`;
-
-      // Insert Order and Order Items (grouped by shop)
-      const byShop = new Map<string, CartItem[]>();
-      for (const item of items) {
-        const sid = item.shop.id;
-        if (!byShop.has(sid)) byShop.set(sid, []);
-        byShop.get(sid)!.push(item);
-      }
-
-      console.log(`[iVeri Gateway] Creating pending orders for ${user.email}. Order: ${orderNumber}`);
-
-      for (const [shopId, shopItems] of byShop) {
-        const orderTotalForShop = shopItems.reduce((s, i) => s + i.product.price * i.quantity, 0);
-
-        const { data: order, error: orderError } = await supabaseAdmin
+      const paymentStatus = mapPaymentStatus(rawStatus);
+      if (paymentStatus !== "paid") {
+        await supabaseAdmin
           .from("orders")
-          .insert({
-            user_id: user.id,
-            shop_id: shopId,
-            total: orderTotalForShop,
-            status: "pending",
-            order_number: orderNumber,
-            customer_name: `${address.firstName} ${address.lastName}`.trim(),
-            customer_email: address.email,
-            customer_phone: address.phone,
-            shipping_address: address.address,
-            shipping_city: address.city,
-            shipping_state: address.state,
-            shipping_zip_code: address.zipCode,
-            shipping_country: address.country,
-            shipping_method: shippingMethod,
-            payment_method: "iveri_card",
-            payment_status: "pending",
+          .update({
+            payment_status: paymentStatus,
+            status: "cancelled",
+            iveri_transaction_id: transactionId,
           })
-          .select("id")
-          .single();
+          .eq("order_number", orderNumber)
+          .eq("user_id", user.id);
+        return json({ success: false, paymentStatus });
+      }
 
-        if (orderError) {
-          console.error("[iVeri Gateway] Error inserting order:", orderError);
-          return new Response(JSON.stringify({ error: "Could not create order records", details: orderError.message }), {
-            status: 500,
-            headers: { ...corsHeaders, "Content-Type": "application/json" },
-          });
-        }
+      const wasPaid = order.payment_status === "paid";
 
-        for (const it of shopItems) {
-          const { error: itemError } = await supabaseAdmin.from("order_items").insert({
-            order_id: order.id,
-            product_id: it.product.id,
-            quantity: it.quantity,
-            price: Number(it.product.price),
-          });
+      await supabaseAdmin
+        .from("orders")
+        .update({
+          payment_status: "paid",
+          status: "pending",
+          iveri_transaction_id: transactionId,
+        })
+        .eq("order_number", orderNumber)
+        .eq("user_id", user.id);
 
-          if (itemError) {
-            console.error("[iVeri Gateway] Error inserting order items:", itemError);
-            return new Response(JSON.stringify({ error: "Could not save order item records", details: itemError.message }), {
-              status: 500,
-              headers: { ...corsHeaders, "Content-Type": "application/json" },
-            });
-          }
+      if (!wasPaid) {
+        try {
+          await sendOrderConfirmationEmail(supabaseAdmin, supabaseServiceKey, order, orderNumber);
+        } catch (e) {
+          console.error("[iVeri] confirm-payment email failed:", e);
         }
       }
 
-      // Configure iVeri values
-      const rawApplicationId = Deno.env.get("IVERI_LITE_APPLICATION_ID") || "test-app-id-guid-placeholder";
-      const sharedSecret = Deno.env.get("IVERI_LITE_SHARED_SECRET") || "test-shared-secret-placeholder";
-      const gatewayUrl = Deno.env.get("IVERI_LITE_GATEWAY_URL") || "https://portal.host.iveri.com/Lite/Authorise.aspx";
+      return json({ success: true, paymentStatus: "paid" });
+    }
 
-      // Format application ID strictly according to iVeri requirements: uppercase with curly braces {GUID}
-      let applicationId = rawApplicationId.trim();
-      if (!applicationId.startsWith("{")) {
-        applicationId = `{${applicationId}}`;
-      }
-      applicationId = applicationId.toUpperCase();
+    // --- VERIFY VIA AuthoriseInfo ---
+    if (action === "verify-transaction") {
+      const merchantTrace = typeof body.merchantTrace === "string" ? body.merchantTrace.trim() : "";
+      if (!merchantTrace) return json({ error: "merchantTrace required" }, 400);
 
-      // iVeri Lite expects amount in cents
-      const amountInCents = Math.round(total * 100).toString();
-      const customerEmail = address.email;
-      const resourcePath = "/Lite/Authorise.aspx"; // Path portion of gatewayUrl
-
-      // Generate SHA-256 secure Lite Transaction Token
-      const liteTransactionToken = await generateLiteToken(
-        sharedSecret,
-        resourcePath,
-        applicationId,
-        amountInCents,
-        customerEmail
-      );
-
-      console.log(`[iVeri Gateway] Generated Token: ${liteTransactionToken} for amount ${amountInCents} cents`);
-
-      // Define standard redirection urls matching platform
-      const siteUrl = (Deno.env.get("SITE_URL") || Deno.env.get("VITE_SITE_URL") || "https://tengavm.co.zw").replace(/\/$/, "");
-      const successUrl = `${siteUrl}/order-confirmation?status=success&order=${orderNumber}`;
-      const failUrl = `${siteUrl}/checkout?status=failed&order=${orderNumber}`;
-
-      // Package all the hidden form fields required by iVeri Lite
-      const formFields = {
-        Lite_Merchant_ApplicationId: applicationId,
-        Lite_Order_Amount: amountInCents,
-        Ecom_BillTo_Online_Email: customerEmail,
-        Lite_Transaction_Token: liteTransactionToken,
-        Ecom_ConsumerOrderID: orderNumber,
-        MerchantReference: orderNumber,
-        Lite_Website_Successful_Url: successUrl,
-        Lite_Website_Fail_Url: failUrl,
-        Lite_Website_TryLater_Url: failUrl,
-        Lite_Website_Error_Url: failUrl,
-        Ecom_Payment_Card_Protocols: "IVERI",
-        Ecom_TransactionComplete: "False",
-      };
-
-      return new Response(JSON.stringify({
-        success: true,
-        gatewayUrl,
-        formFields,
-        orderNumber
-      }), {
-        status: 200,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      const info = await queryAuthoriseInfo(gatewayUrl, applicationId, merchantTrace);
+      const paymentStatus = mapPaymentStatus(info.rawStatus);
+      return json({
+        success: info.ok,
+        paymentStatus,
+        rawStatus: info.rawStatus ?? null,
       });
     }
 
-    return new Response(JSON.stringify({ error: "Method not allowed" }), {
-      status: 405,
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
-    });
+    // --- INITIALIZE (default) ---
+    const { items, address, shippingMethod, shippingCost } = body as {
+      items: CartItem[];
+      address: AddressForm;
+      shippingMethod: string;
+      shippingCost: number;
+    };
 
-  } catch (err) {
-    const errorMsg = err instanceof Error ? err.message : String(err);
-    console.error("[iVeri Gateway] Fatal Error:", err);
-    return new Response(JSON.stringify({ error: "Internal Server Error", details: errorMsg }), {
-      status: 500,
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    if (!items?.length || !address) {
+      return json({ error: "Invalid payload: items and address are required" }, 400);
+    }
+
+    const { fields: lineItemFields, totalCents } = buildLineItemFields(items, Number(shippingCost) || 0);
+    const amountInCents = totalCents.toString();
+    const orderNumber = generateOrderNumber();
+    const merchantTrace = orderNumber;
+    const checkoutNonce = generateCheckoutNonce();
+    const customerEmail = address.email.trim();
+
+    const byShop = new Map<string, CartItem[]>();
+    for (const item of items) {
+      const sid = item.shop.id;
+      if (!byShop.has(sid)) byShop.set(sid, []);
+      byShop.get(sid)!.push(item);
+    }
+
+    for (const [shopId, shopItems] of byShop) {
+      const orderTotalForShop = shopItems.reduce((s, i) => s + i.product.price * i.quantity, 0);
+
+      const { data: order, error: orderError } = await supabaseAdmin
+        .from("orders")
+        .insert({
+          user_id: user.id,
+          shop_id: shopId,
+          total: orderTotalForShop,
+          status: "pending",
+          order_number: orderNumber,
+          customer_name: `${address.firstName} ${address.lastName}`.trim(),
+          customer_email: customerEmail,
+          customer_phone: address.phone,
+          shipping_address: address.address,
+          shipping_city: address.city,
+          shipping_state: address.state,
+          shipping_zip_code: address.zipCode,
+          shipping_country: address.country,
+          shipping_method: shippingMethod,
+          payment_method: "iveri_card",
+          payment_status: "pending",
+          iveri_merchant_trace: merchantTrace,
+          checkout_nonce: checkoutNonce,
+        })
+        .select("id")
+        .single();
+
+      if (orderError) {
+        return json({ error: "Could not create order records", details: orderError.message }, 500);
+      }
+
+      for (const it of shopItems) {
+        const { error: itemError } = await supabaseAdmin.from("order_items").insert({
+          order_id: order.id,
+          product_id: it.product.id,
+          quantity: it.quantity,
+          price: Number(it.product.price),
+        });
+        if (itemError) {
+          return json({ error: "Could not save order item records", details: itemError.message }, 500);
+        }
+      }
+    }
+
+    const resourcePath = "/Lite/Authorise.aspx";
+    const liteTransactionToken = await generateLiteToken(
+      sharedSecret,
+      resourcePath,
+      applicationId,
+      amountInCents,
+      customerEmail,
+    );
+
+    const siteUrl = (Deno.env.get("SITE_URL") || Deno.env.get("VITE_SITE_URL") || "https://tengavm.co.zw").replace(
+      /\/$/,
+      "",
+    );
+    const returnQuery = `order=${encodeURIComponent(orderNumber)}&nonce=${encodeURIComponent(checkoutNonce)}`;
+    const successUrl = `${siteUrl}/order-confirmation?status=success&${returnQuery}`;
+    const failUrl = `${siteUrl}/checkout?status=failed&${returnQuery}`;
+
+    const formFields: Record<string, string> = {
+      Lite_Merchant_ApplicationId: applicationId,
+      Lite_Order_Amount: amountInCents,
+      Ecom_BillTo_Online_Email: customerEmail,
+      Lite_Transaction_Token: liteTransactionToken,
+      Ecom_ConsumerOrderID: orderNumber,
+      MerchantReference: orderNumber,
+      Lite_Merchant_Trace: merchantTrace,
+      [NONCE_FIELD]: checkoutNonce,
+      Lite_Website_Successful_Url: successUrl,
+      Lite_Website_Fail_Url: failUrl,
+      Lite_Website_TryLater_Url: failUrl,
+      Lite_Website_Error_Url: failUrl,
+      Ecom_Payment_Card_Protocols: "IVERI",
+      Ecom_TransactionComplete: "False",
+      ...lineItemFields,
+    };
+
+    return json({
+      success: true,
+      gatewayUrl,
+      portalUrl: gatewayOrigin(gatewayUrl),
+      formFields,
+      orderNumber,
+      merchantTrace,
+      checkoutNonce,
+      amountInCents: totalCents,
     });
+  } catch (err) {
+    console.error("[iVeri Gateway] Fatal:", err);
+    return json({ error: "Internal Server Error", details: (err as Error).message }, 500);
   }
 });

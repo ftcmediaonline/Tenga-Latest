@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useEffect, useState } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { ArrowLeft, ShoppingBag, Minus, Plus, X, Truck, Shield, CreditCard, Loader2, Banknote } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -16,6 +16,16 @@ import CartDrawer from '@/components/layout/CartDrawer';
 import { z } from 'zod';
 import { useToast } from '@/hooks/use-toast';
 import { sendTransactionalEmail } from '@/utils/emailService';
+import {
+  generateIveriOrderNumber,
+  IVERI_NONCE_FIELD,
+  isIveriPaymentSuccess,
+  loadIveriPendingOrder,
+  parseIveriFromUrl,
+  saveIveriCheckoutSession,
+  verifyIveriNonce,
+  type IveriPendingOrder,
+} from '@/utils/iveri';
 
 const addressSchema = z.object({
   firstName: z.string().trim().min(1, 'First name is required').max(50),
@@ -34,6 +44,7 @@ type PaymentMethod = 'iveri' | 'cod';
 
 const CheckoutPage = () => {
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const { toast } = useToast();
   const { user } = useAuth();
   const { items, removeFromCart, updateQuantity, totalPrice, totalItems, clearCart } = useCart();
@@ -56,6 +67,19 @@ const CheckoutPage = () => {
   const shippingCost = shippingMethod === 'express' ? 14.99 : shippingMethod === 'standard' ? 5.99 : 0;
   const orderTotal = totalPrice + shippingCost;
 
+  useEffect(() => {
+    const status = searchParams.get('status');
+    if (status !== 'failed') return;
+
+    const parsed = parseIveriFromUrl(searchParams.toString());
+    toast({
+      title: 'Payment not completed',
+      description: parsed.description || 'Your payment was declined or cancelled. You can try again.',
+      variant: 'destructive',
+    });
+    setSearchParams({}, { replace: true });
+  }, [searchParams, setSearchParams, toast]);
+
   const updateField = (field: keyof AddressForm, value: string) => {
     setForm(prev => ({ ...prev, [field]: value }));
     if (errors[field]) {
@@ -63,45 +87,80 @@ const CheckoutPage = () => {
     }
   };
 
+  const confirmPaymentOnServer = async (
+    orderNumber: string,
+    checkoutNonce: string,
+    litePaymentCardStatus: string,
+    transactionIndex?: string | null,
+  ) => {
+    const { data, error } = await supabase.functions.invoke('iveri-gateway', {
+      body: {
+        action: 'confirm-payment',
+        orderNumber,
+        checkoutNonce,
+        litePaymentCardStatus,
+        transactionIndex: transactionIndex ?? undefined,
+      },
+    });
+    if (error || !data?.success) {
+      console.warn('[iVeri] confirm-payment:', error || data);
+    }
+    return data;
+  };
+
   const triggerLiteBoxPayment = (
     gatewayUrl: string,
+    portalUrl: string,
     formFields: Record<string, string>,
     addressData: AddressForm,
     orderNumber: string,
+    checkoutNonce: string,
+    merchantTrace: string,
+    pendingOrder: IveriPendingOrder,
   ) => {
-    // Extract base URL (e.g. https://portal.host.iveri.com)
-    const urlObj = new URL(gatewayUrl);
-    const portalUrl = `${urlObj.protocol}//${urlObj.host}`;
+    saveIveriCheckoutSession(orderNumber, checkoutNonce, pendingOrder);
 
-    // Clean any old forms
     const oldForm = document.getElementById('tenga-iveri-form');
     if (oldForm) oldForm.remove();
 
-    // Create custom form exactly matching iVeri LiteBox specifications
-    const form = document.createElement('form');
-    form.id = 'tenga-iveri-form';
-    form.method = 'POST';
-    form.action = gatewayUrl;
-    form.style.display = 'none';
+    const payForm = document.createElement('form');
+    payForm.id = 'tenga-iveri-form';
+    payForm.method = 'POST';
+    payForm.action = gatewayUrl;
+    payForm.style.display = 'none';
 
     Object.entries(formFields).forEach(([key, val]) => {
       const input = document.createElement('input');
       input.type = 'hidden';
       input.name = key;
       input.value = String(val);
-      form.appendChild(input);
+      payForm.appendChild(input);
     });
 
-    // LiteBox looks for a specific element with id="iveri-litebox-button" inside the DOM to trigger modal
-    const triggerBtn = document.createElement('button');
-    triggerBtn.id = 'iveri-litebox-button';
-    triggerBtn.type = 'submit';
-    triggerBtn.style.display = 'none';
-    form.appendChild(triggerBtn);
+    const triggerLink = document.createElement('a');
+    triggerLink.id = 'iveri-litebox-button';
+    triggerLink.href = '#';
+    triggerLink.textContent = 'Pay';
+    triggerLink.style.display = 'none';
+    payForm.appendChild(triggerLink);
 
-    document.body.appendChild(form);
+    document.body.appendChild(payForm);
 
-    // Dynamic loader helpers
+    const loadStylesheet = (href: string): Promise<void> => {
+      return new Promise((resolve, reject) => {
+        if (document.querySelector(`link[href="${href}"]`)) {
+          resolve();
+          return;
+        }
+        const link = document.createElement('link');
+        link.rel = 'stylesheet';
+        link.href = href;
+        link.onload = () => resolve();
+        link.onerror = () => reject(new Error(`Failed to load CSS: ${href}`));
+        document.head.appendChild(link);
+      });
+    };
+
     const loadScript = (url: string): Promise<void> => {
       return new Promise((resolve, reject) => {
         const scripts = document.getElementsByTagName('script');
@@ -134,53 +193,67 @@ const CheckoutPage = () => {
 
         const $ = (window as any).$;
 
-        // 2. Load Bootstrap JS bundle (with Popper) dynamically to avoid bloating regular page load
+        await loadStylesheet('https://cdnjs.cloudflare.com/ajax/libs/bootstrap/5.3.0/css/bootstrap.min.css');
         await loadScript('https://cdnjs.cloudflare.com/ajax/libs/bootstrap/5.3.0/js/bootstrap.bundle.min.js');
-
-        // 3. Load iVeri's jQuery LiteBox script
         await loadScript(`${portalUrl}/scripts/jquery/js/jquery.litebox.js`);
 
-        // 4. Bind complete callback event
-        (window as any).liteboxComplete = async (data: any) => {
+        (window as any).liteboxComplete = async (data: Record<string, unknown>) => {
           console.log('[iVeri LiteBox] Payment Complete Callback:', data);
           setPlacing(false);
 
-          const status = data.Lite_Payment_Card_Status || data.Lite_Status;
-          if (status === '0' || status === 'Success' || status === 'APPROVED') {
+          const confirmedOrderNumber = String(
+            data.Ecom_ConsumerOrderID || formFields.Ecom_ConsumerOrderID || orderNumber,
+          );
+          const receivedNonce = data[IVERI_NONCE_FIELD] != null ? String(data[IVERI_NONCE_FIELD]) : null;
+
+          if (!verifyIveriNonce(receivedNonce, confirmedOrderNumber)) {
             toast({
-              title: '🎉 Payment Successful!',
-              description: 'Your order has been authorized successfully.',
+              title: 'Security check failed',
+              description: 'Payment response could not be verified. Please contact support with your order reference.',
+              variant: 'destructive',
             });
-            const confirmedOrderNumber = formFields.Ecom_ConsumerOrderID || orderNumber;
-            await sendTransactionalEmail({
-              action: 'order-confirmation',
-              email: addressData.email,
-              customerName: `${addressData.firstName} ${addressData.lastName}`.trim(),
-              orderNumber: confirmedOrderNumber,
-              shippingMethod,
-              total: orderTotal,
-              items: items.map((i) => ({
-                name: i.product.name,
-                qty: i.quantity,
-                price: Number(i.product.price),
-              })),
+            return;
+          }
+
+          const status = data.Lite_Payment_Card_Status ?? data.Lite_Status;
+          const transactionIndex = data.Lite_TransactionIndex
+            ? String(data.Lite_TransactionIndex)
+            : null;
+
+          if (isIveriPaymentSuccess(status)) {
+            await confirmPaymentOnServer(
+              confirmedOrderNumber,
+              checkoutNonce,
+              String(status),
+              transactionIndex,
+            );
+
+            try {
+              await supabase.functions.invoke('iveri-gateway', {
+                body: { action: 'verify-transaction', merchantTrace },
+              });
+            } catch {
+              /* AuthoriseInfo is advisory */
+            }
+
+            toast({
+              title: 'Payment successful',
+              description: 'Your order has been authorized.',
             });
             clearCart();
-            navigate('/order-confirmation', {
-              state: {
-                orderNumber: confirmedOrderNumber,
-                items: items.map(i => ({ name: i.product.name, qty: i.quantity, price: i.product.price, image: i.product.images[0] })),
-                shippingAddress: addressData,
-                shippingMethod,
-                shippingCost,
-                subtotal: totalPrice,
-                total: orderTotal,
-              },
+            navigate(`/order-confirmation?status=success&order=${encodeURIComponent(confirmedOrderNumber)}&nonce=${encodeURIComponent(checkoutNonce)}`, {
+              state: pendingOrder,
             });
           } else {
+            await confirmPaymentOnServer(
+              confirmedOrderNumber,
+              checkoutNonce,
+              String(status ?? 'failed'),
+              transactionIndex,
+            );
             toast({
               title: 'Payment Declined',
-              description: data.Lite_Result_Description || 'The transaction was refused or cancelled.',
+              description: String(data.Lite_Result_Description || 'The transaction was refused or cancelled.'),
               variant: 'destructive',
             });
           }
@@ -205,9 +278,7 @@ const CheckoutPage = () => {
 
       } catch (err) {
         console.error('[iVeri LiteBox] Loading failed, running direct redirect fallback:', err);
-        // Fallback: direct form post redirect
-        form.submit();
-        clearCart();
+        payForm.submit();
       }
     };
 
@@ -229,8 +300,8 @@ const CheckoutPage = () => {
       return;
     }
 
-    const orderNumber = `TNG-${Date.now().toString(36).toUpperCase()}`;
-    const confirmationState = {
+    const orderNumber = generateIveriOrderNumber();
+    const confirmationState: IveriPendingOrder = {
       orderNumber,
       items: items.map(i => ({ name: i.product.name, qty: i.quantity, price: i.product.price, image: i.product.images[0] })),
       shippingAddress: result.data,
@@ -275,9 +346,32 @@ const CheckoutPage = () => {
           return;
         }
 
-        const { gatewayUrl, formFields, orderNumber: gatewayOrderNumber } = data;
+        const {
+          gatewayUrl,
+          portalUrl,
+          formFields,
+          orderNumber: gatewayOrderNumber,
+          checkoutNonce,
+          merchantTrace,
+        } = data;
 
-        triggerLiteBoxPayment(gatewayUrl, formFields, result.data, gatewayOrderNumber);
+        const pendingOrder: IveriPendingOrder = {
+          ...confirmationState,
+          orderNumber: gatewayOrderNumber,
+          checkoutNonce,
+          merchantTrace,
+        };
+
+        triggerLiteBoxPayment(
+          gatewayUrl,
+          portalUrl,
+          formFields,
+          result.data,
+          gatewayOrderNumber,
+          checkoutNonce,
+          merchantTrace,
+          pendingOrder,
+        );
         return;
       } catch (err) {
         console.error('[iVeri] Direct connection failure:', err);

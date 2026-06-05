@@ -1,31 +1,20 @@
-import { useLocation, useNavigate, Navigate } from 'react-router-dom';
+import { useEffect, useState } from 'react';
+import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { motion } from 'framer-motion';
-import { CheckCircle2, Package, MapPin, Truck, ArrowRight } from 'lucide-react';
+import { CheckCircle2, Package, MapPin, Truck, ArrowRight, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
 import Header from '@/components/layout/Header';
 import Footer from '@/components/layout/Footer';
 import CartDrawer from '@/components/layout/CartDrawer';
-
-interface OrderState {
-  orderNumber: string;
-  items: { name: string; qty: number; price: number; image: string }[];
-  shippingAddress: {
-    firstName: string;
-    lastName: string;
-    email: string;
-    phone: string;
-    address: string;
-    city: string;
-    state: string;
-    zipCode: string;
-    country: string;
-  };
-  shippingMethod: string;
-  shippingCost: number;
-  subtotal: number;
-  total: number;
-}
+import { supabase } from '@/integrations/supabase/client';
+import {
+  clearIveriCheckoutSession,
+  isIveriPaymentSuccess,
+  loadIveriPendingOrder,
+  parseIveriFromUrl,
+  type IveriPendingOrder,
+} from '@/utils/iveri';
 
 const shippingLabels: Record<string, string> = {
   pickup: 'Store Pickup',
@@ -36,10 +25,81 @@ const shippingLabels: Record<string, string> = {
 const OrderConfirmationPage = () => {
   const location = useLocation();
   const navigate = useNavigate();
-  const order = location.state as OrderState | undefined;
+  const [searchParams] = useSearchParams();
+  const [order, setOrder] = useState<IveriPendingOrder | undefined>(
+    location.state as IveriPendingOrder | undefined,
+  );
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    const fromState = location.state as IveriPendingOrder | undefined;
+    if (fromState?.orderNumber) {
+      setOrder(fromState);
+      return;
+    }
+
+    const orderNumber = searchParams.get('order');
+    if (!orderNumber) return;
+
+    const saved = loadIveriPendingOrder<IveriPendingOrder>(orderNumber);
+    if (saved) {
+      setOrder(saved);
+    }
+  }, [location.state, searchParams]);
+
+  useEffect(() => {
+    const orderNumber = searchParams.get('order');
+    const nonce = searchParams.get('nonce');
+    const urlStatus = searchParams.get('status');
+    if (!orderNumber || !nonce || urlStatus !== 'success') return;
+
+    const parsed = parseIveriFromUrl(searchParams.toString(), location.hash);
+    const iveriStatus = parsed.status ?? '0';
+
+    let cancelled = false;
+    setLoading(true);
+
+    (async () => {
+      try {
+        if (isIveriPaymentSuccess(iveriStatus)) {
+          await supabase.functions.invoke('iveri-gateway', {
+            body: {
+              action: 'confirm-payment',
+              orderNumber,
+              checkoutNonce: nonce,
+              litePaymentCardStatus: String(iveriStatus),
+              transactionIndex: parsed.transactionIndex ?? undefined,
+            },
+          });
+        }
+        clearIveriCheckoutSession(orderNumber);
+      } catch (e) {
+        console.error('[OrderConfirmation] iVeri return handling:', e);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [searchParams, location.hash]);
 
   if (!order) {
-    return <Navigate to="/" replace />;
+    const orderNumber = searchParams.get('order');
+    if (loading || (orderNumber && searchParams.get('status') === 'success')) {
+      return (
+        <div className="min-h-screen flex flex-col">
+          <Header />
+          <main className="flex-1 flex items-center justify-center">
+            <Loader2 className="h-10 w-10 animate-spin text-muted-foreground" />
+          </main>
+          <Footer />
+        </div>
+      );
+    }
+    navigate('/', { replace: true });
+    return null;
   }
 
   return (
@@ -49,7 +109,6 @@ const OrderConfirmationPage = () => {
 
       <main className="flex-1 container py-12">
         <div className="max-w-2xl mx-auto">
-          {/* Success Header */}
           <motion.div
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
@@ -70,105 +129,94 @@ const OrderConfirmationPage = () => {
             </p>
           </motion.div>
 
-          {/* Order Details Card */}
           <motion.div
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 0.3 }}
             className="rounded-xl border border-border overflow-hidden"
           >
-            {/* Items */}
-            <div className="p-6">
-              <h2 className="font-semibold flex items-center gap-2 mb-4">
+            <div className="p-6 space-y-4">
+              <h2 className="font-semibold flex items-center gap-2">
                 <Package className="h-5 w-5 text-primary" />
-                Items Ordered
+                Order items
               </h2>
-              <div className="space-y-3">
+              <ul className="space-y-3">
                 {order.items.map((item, i) => (
-                  <div key={i} className="flex items-center gap-3">
-                    <img src={item.image} alt={item.name} className="h-12 w-12 rounded-lg object-cover" />
+                  <li key={i} className="flex gap-3">
+                    <img
+                      src={item.image}
+                      alt={item.name}
+                      className="h-14 w-14 rounded-lg object-cover"
+                    />
                     <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium truncate">{item.name}</p>
+                      <p className="font-medium text-sm truncate">{item.name}</p>
                       <p className="text-xs text-muted-foreground">Qty: {item.qty}</p>
                     </div>
-                    <span className="text-sm font-semibold">${(item.price * item.qty).toFixed(2)}</span>
-                  </div>
+                    <p className="font-medium text-sm">${(item.price * item.qty).toFixed(2)}</p>
+                  </li>
                 ))}
-              </div>
+              </ul>
             </div>
 
             <Separator />
 
-            {/* Shipping Address */}
-            <div className="p-6">
-              <h2 className="font-semibold flex items-center gap-2 mb-3">
-                <MapPin className="h-5 w-5 text-primary" />
-                Shipping Address
-              </h2>
-              <div className="text-sm text-muted-foreground space-y-0.5">
-                <p className="text-foreground font-medium">
-                  {order.shippingAddress.firstName} {order.shippingAddress.lastName}
-                </p>
-                <p>{order.shippingAddress.address}</p>
-                <p>
-                  {order.shippingAddress.city}, {order.shippingAddress.state} {order.shippingAddress.zipCode}
-                </p>
-                <p>{order.shippingAddress.country}</p>
-                <p className="pt-1">{order.shippingAddress.email} · {order.shippingAddress.phone}</p>
-              </div>
-            </div>
-
-            <Separator />
-
-            {/* Shipping Method */}
-            <div className="p-6">
-              <h2 className="font-semibold flex items-center gap-2 mb-2">
+            <div className="p-6 space-y-4">
+              <h2 className="font-semibold flex items-center gap-2">
                 <Truck className="h-5 w-5 text-primary" />
-                Shipping Method
+                Shipping
               </h2>
               <p className="text-sm text-muted-foreground">
-                {shippingLabels[order.shippingMethod] || order.shippingMethod}
+                {shippingLabels[order.shippingMethod] ?? order.shippingMethod}
+                {order.shippingCost > 0 && ` — $${order.shippingCost.toFixed(2)}`}
               </p>
+              <div className="flex items-start gap-2 text-sm">
+                <MapPin className="h-4 w-4 text-muted-foreground mt-0.5" />
+                <div>
+                  <p className="font-medium">
+                    {order.shippingAddress.firstName} {order.shippingAddress.lastName}
+                  </p>
+                  <p className="text-muted-foreground">{order.shippingAddress.address}</p>
+                  <p className="text-muted-foreground">
+                    {order.shippingAddress.city}, {order.shippingAddress.state}{' '}
+                    {order.shippingAddress.zipCode}
+                  </p>
+                  <p className="text-muted-foreground">{order.shippingAddress.country}</p>
+                  <p className="text-muted-foreground mt-1">{order.shippingAddress.email}</p>
+                </div>
+              </div>
             </div>
 
             <Separator />
 
-            {/* Totals */}
-            <div className="p-6 bg-secondary/50 space-y-2 text-sm">
+            <div className="p-6 space-y-2 text-sm">
               <div className="flex justify-between">
                 <span className="text-muted-foreground">Subtotal</span>
                 <span>${order.subtotal.toFixed(2)}</span>
               </div>
-              <div className="flex justify-between">
-                <span className="text-muted-foreground">Shipping</span>
-                <span>{order.shippingCost === 0 ? 'Free' : `$${order.shippingCost.toFixed(2)}`}</span>
-              </div>
-              <Separator />
-              <div className="flex justify-between text-base font-bold">
+              {order.shippingCost > 0 && (
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Shipping</span>
+                  <span>${order.shippingCost.toFixed(2)}</span>
+                </div>
+              )}
+              <div className="flex justify-between font-semibold text-base pt-2">
                 <span>Total</span>
                 <span>${order.total.toFixed(2)}</span>
               </div>
             </div>
           </motion.div>
 
-          {/* CTA */}
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            transition={{ delay: 0.5 }}
-            className="flex flex-col sm:flex-row items-center justify-center gap-4 mt-8"
-          >
-            <Button variant="outline" onClick={() => navigate('/')}>
-              Back to Home
+          <div className="mt-8 flex flex-col sm:flex-row gap-3 justify-center">
+            <Button onClick={() => navigate('/orders')} variant="outline">
+              View order history
             </Button>
-            <Button onClick={() => navigate('/discover')} className="bg-gradient-primary">
-              Continue Shopping
-              <ArrowRight className="ml-2 h-4 w-4" />
+            <Button onClick={() => navigate('/discover')} className="bg-gradient-primary gap-2">
+              Continue shopping
+              <ArrowRight className="h-4 w-4" />
             </Button>
-          </motion.div>
+          </div>
         </div>
       </main>
-
       <Footer />
     </div>
   );
