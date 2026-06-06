@@ -17,8 +17,8 @@ const CategorySection = () => {
   if (loading || categories.length === 0) return null;
 
   return (
-    <section className="py-8 sm:py-12 md:py-16 bg-secondary/50">
-      <div className="container px-4 sm:px-6">
+    <section className="py-12 sm:py-16 bg-secondary/50">
+      <div className="container px-8 sm:px-6">
         {/* Header */}
         <div className="text-center mb-6 sm:mb-10">
           <motion.h2
@@ -41,7 +41,7 @@ const CategorySection = () => {
         </div>
 
         {/* Categories Carousel / Grid */}
-        <div className="flex flex-row overflow-x-auto gap-3 snap-x snap-mandatory hide-scrollbar -mx-4 px-4 py-1.5 sm:grid sm:grid-cols-4 lg:grid-cols-8 sm:gap-4 sm:overflow-x-visible sm:snap-none sm:mx-0 sm:px-0 sm:py-0">
+        <div className="flex flex-row overflow-x-auto gap-3 snap-x snap-mandatory hide-scrollbar py-1.5 sm:grid sm:grid-cols-4 lg:grid-cols-8 sm:gap-4 sm:overflow-x-visible sm:snap-none sm:mx-0 sm:px-0 sm:py-0">
           {categories.map((category, index) => {
             const Icon = category.icon;
             return (

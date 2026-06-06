@@ -59,8 +59,8 @@ const FeaturedShops = () => {
   }, []);
 
   return (
-    <section className="py-8 sm:py-12 md:py-16">
-      <div className="container px-4 sm:px-6">
+    <section className="py-12 sm:py-16">
+      <div className="container px-8 sm:px-6">
         {/* Header */}
         <div className="flex items-end justify-between mb-8">
           <div>
@@ -97,7 +97,7 @@ const FeaturedShops = () => {
           </div>
         ) : (
           <>
-            <div className="flex overflow-x-auto gap-4 snap-x snap-mandatory hide-scrollbar -mx-4 px-4 pb-4 sm:grid sm:grid-cols-2 lg:grid-cols-4 sm:gap-6 sm:overflow-x-visible sm:snap-none sm:mx-0 sm:px-0 sm:pb-0">
+            <div className="flex overflow-x-auto gap-4 snap-x snap-mandatory hide-scrollbar pb-4 sm:grid sm:grid-cols-2 lg:grid-cols-4 sm:gap-6 sm:overflow-x-visible sm:snap-none sm:mx-0 sm:px-0 sm:pb-0">
               {featuredShops.map((shop, index) => (
                 <ShopCard key={shop.id} shop={shop} index={index} className="w-[280px] shrink-0 snap-start sm:w-auto sm:shrink sm:snap-none" />
               ))}

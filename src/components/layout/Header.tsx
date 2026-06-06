@@ -105,7 +105,7 @@ const Header = () => {
 
   return (
     <header className="sticky top-0 z-50 w-full border-b border-border bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80 pl-[env(safe-area-inset-left)] pr-[env(safe-area-inset-right)]">
-      <div className="container flex h-14 sm:h-16 items-center justify-between gap-2 sm:gap-4 px-4 sm:px-6">
+      <div className="container flex h-14 sm:h-16 items-center justify-between gap-2 sm:gap-4 px-8 sm:px-6">
         {/* Logo */}
         <Link to="/" className="flex items-center gap-2 min-h-[44px] min-w-[44px] -ml-2 flex-shrink-0">
           <img src={theme === 'dark' ? tengaLogoWhite : tengaLogo} alt="Tenga Virtual Mall" className="h-12 w-auto sm:h-12" />
@@ -291,7 +291,7 @@ const Header = () => {
             exit={{ height: 0, opacity: 0 }}
             className="border-t border-border md:hidden overflow-hidden"
           >
-            <form onSubmit={handleSearch} className="container py-3 px-4 sm:px-6 flex gap-2">
+            <form onSubmit={handleSearch} className="container py-3 px-8 sm:px-6 flex gap-2">
               <div className="relative flex-1 min-w-0">
                 <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground pointer-events-none" />
                 <Input
@@ -319,7 +319,7 @@ const Header = () => {
             exit={{ height: 0, opacity: 0 }}
             className="border-t border-border md:hidden overflow-hidden"
           >
-            <nav className="container py-4 flex flex-col gap-0.5 px-4">
+            <nav className="container py-4 flex flex-col gap-0.5 px-8">
               {navLinks.map((link) => (
                 <Link
                   key={link.name}

@@ -51,11 +51,11 @@ const ProductCard = ({ product, shop, index = 0, variant = 'default', className 
       transition={{ delay: index * 0.05 }}
       onMouseEnter={() => setIsHovered(true)}
       onMouseLeave={() => setIsHovered(false)}
-      className={className}
+      className={cn("h-full", className)}
     >
       <Link
         to={`/product/${product.slug}`}
-        className="group block overflow-hidden rounded-2xl bg-card"
+        className="group flex flex-col h-full overflow-hidden rounded-2xl bg-card"
       >
         {/* Image */}
         <div className="relative aspect-square overflow-hidden bg-secondary">
@@ -97,13 +97,15 @@ const ProductCard = ({ product, shop, index = 0, variant = 'default', className 
         </div>
 
         {/* Content */}
-        <div className="p-3">
-          {shop && (
-            <p className="text-xs text-muted-foreground mb-1">{shop.name}</p>
-          )}
-          <h3 className="font-medium text-sm text-card-foreground line-clamp-2 group-hover:text-primary transition-colors">
-            {product.name}
-          </h3>
+        <div className="p-3 flex flex-col flex-1 justify-between">
+          <div>
+            {shop && (
+              <p className="text-xs text-muted-foreground mb-1">{shop.name}</p>
+            )}
+            <h3 className="font-medium text-sm text-card-foreground line-clamp-2 group-hover:text-primary transition-colors min-h-[40px]">
+              {product.name}
+            </h3>
+          </div>
 
           <div className="mt-2 flex items-center justify-between">
             <div className="flex items-center gap-2">
@@ -119,6 +121,7 @@ const ProductCard = ({ product, shop, index = 0, variant = 'default', className 
 
             {variant === 'default' && (
               <button
+                type="button"
                 onClick={handleReviewClick}
                 className="flex items-center gap-1 text-xs text-muted-foreground hover:text-primary transition-colors"
               >

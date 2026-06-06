@@ -16,11 +16,11 @@ const ShopCard = ({ shop, index = 0, className }: ShopCardProps) => {
       initial={{ opacity: 0, y: 20 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ delay: index * 0.1 }}
-      className={className}
+      className={cn("h-full", className)}
     >
       <Link
         to={`/shop/${shop.slug}`}
-        className="group block overflow-hidden rounded-2xl bg-card shadow-card transition-all duration-300 hover:shadow-card-hover"
+        className="group flex flex-col h-full overflow-hidden rounded-2xl bg-card shadow-card transition-all duration-300 hover:shadow-card-hover"
       >
         {/* Banner */}
         <div className="relative h-24 overflow-hidden">
@@ -33,7 +33,7 @@ const ShopCard = ({ shop, index = 0, className }: ShopCardProps) => {
         </div>
 
         {/* Content */}
-        <div className="relative px-4 pb-4">
+        <div className="relative px-4 pb-4 flex flex-col flex-1">
           {/* Logo */}
           <div className="absolute -top-8 left-4">
             <div className="relative">
@@ -51,27 +51,29 @@ const ShopCard = ({ shop, index = 0, className }: ShopCardProps) => {
           </div>
 
           {/* Info */}
-          <div className="pt-10">
-            <div className="flex items-start justify-between gap-2">
-              <h3 className="font-semibold text-card-foreground group-hover:text-primary transition-colors line-clamp-1">
-                {shop.name}
-              </h3>
-              <div className="flex items-center gap-1 text-sm">
-                <Star className="h-4 w-4 fill-warning text-warning" />
-                <span className="font-medium">{shop.rating}</span>
+          <div className="pt-10 flex flex-col flex-1 justify-between">
+            <div>
+              <div className="flex items-start justify-between gap-2">
+                <h3 className="font-semibold text-card-foreground group-hover:text-primary transition-colors line-clamp-1">
+                  {shop.name}
+                </h3>
+                <div className="flex items-center gap-1 text-sm">
+                  <Star className="h-4 w-4 fill-warning text-warning" />
+                  <span className="font-medium">{shop.rating}</span>
+                </div>
               </div>
-            </div>
 
-            <p className="mt-1 text-xs text-muted-foreground line-clamp-2">
-              {shop.bio}
-            </p>
+              <p className="mt-1 text-xs text-muted-foreground line-clamp-2 min-h-[32px]">
+                {shop.bio}
+              </p>
+            </div>
 
             <div className="mt-3 flex items-center justify-between text-xs text-muted-foreground">
               <div className="flex items-center gap-1">
                 <MapPin className="h-3.5 w-3.5" />
-                <span>{shop.location}</span>
+                <span className="line-clamp-1">{shop.location}</span>
               </div>
-              <span className="font-medium text-foreground">{shop.productCount} products</span>
+              <span className="font-medium text-foreground shrink-0">{shop.productCount} products</span>
             </div>
           </div>
         </div>
