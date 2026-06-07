@@ -5,6 +5,7 @@ import Footer from '@/components/layout/Footer';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Input } from '@/components/ui/input';
 import { useAuth } from '@/hooks/useAuth';
 import { useToast } from '@/hooks/use-toast';
 import { supabase } from '@/integrations/supabase/client';
@@ -26,6 +27,9 @@ import {
   Star,
   Mail,
   Trash2,
+  Edit2,
+  Check,
+  X,
 } from 'lucide-react';
 
 type TableStat = { table: string; count: number };
@@ -53,6 +57,9 @@ const DevDashboardPage = () => {
   const [featuredShops, setFeaturedShops] = useState<FeaturedShop[]>([]);
   const [featuredShopsLoading, setFeaturedShopsLoading] = useState(true);
   const [togglingFeaturedId, setTogglingFeaturedId] = useState<string | null>(null);
+  const [editingShopId, setEditingShopId] = useState<string | null>(null);
+  const [editingShopName, setEditingShopName] = useState<string>('');
+  const [savingShopName, setSavingShopName] = useState(false);
   const { toast } = useToast();
   const [sandboxEmails, setSandboxEmails] = useState<any[]>([]);
 
@@ -225,6 +232,40 @@ const DevDashboardPage = () => {
     }
     setFeaturedShops((prev) => prev.map((s) => (s.id === shop.id ? { ...s, is_featured: next } : s)));
     toast({ title: next ? 'Shop featured' : 'Shop unfeatured' });
+  };
+
+  const handleStartEdit = (id: string, currentName: string) => {
+    setEditingShopId(id);
+    setEditingShopName(currentName);
+  };
+
+  const handleCancelEdit = () => {
+    setEditingShopId(null);
+    setEditingShopName('');
+  };
+
+  const handleSaveShopName = async (shopId: string) => {
+    if (!editingShopName.trim()) {
+      toast({ title: 'Invalid name', description: 'Shop name cannot be empty.', variant: 'destructive' });
+      return;
+    }
+    setSavingShopName(true);
+    const { error } = await supabase.rpc('set_shop_name', { p_shop_id: shopId, p_name: editingShopName.trim() });
+    setSavingShopName(false);
+    if (error) {
+      toast({ title: 'Failed to update shop name', description: error.message, variant: 'destructive' });
+      return;
+    }
+
+    setDiscoverShops((prev) => prev.map((s) => (s.id === shopId ? { ...s, name: editingShopName.trim() } : s)));
+    setFeaturedShops((prev) => prev.map((s) => (s.id === shopId ? { ...s, name: editingShopName.trim() } : s)));
+    setDiscoverProducts((prev) =>
+      prev.map((p) => (p.shop_id === shopId ? { ...p, shop_name: editingShopName.trim() } : p))
+    );
+
+    setEditingShopId(null);
+    setEditingShopName('');
+    toast({ title: 'Shop name updated successfully' });
   };
 
   const handleSetDev = async (profile: DevProfile, makeDev: boolean) => {
@@ -416,16 +457,64 @@ const DevDashboardPage = () => {
               ) : (
                 <div className="border rounded-lg divide-y divide-border max-h-[240px] overflow-y-auto">
                   {discoverShops.map((s) => (
-                    <div key={s.id} className="flex items-center justify-between gap-3 px-3 py-2">
-                      <div className="min-w-0">
-                        <p className="font-medium truncate">{s.name}</p>
-                        <p className="text-xs text-muted-foreground">/{s.slug}</p>
+                    <div key={s.id} className="group flex items-center justify-between gap-3 px-3 py-2">
+                      <div className="flex-1 min-w-0">
+                        {editingShopId === s.id ? (
+                          <div className="flex items-center gap-1.5 py-1">
+                            <Input
+                              type="text"
+                              value={editingShopName}
+                              onChange={(e) => setEditingShopName(e.target.value)}
+                              className="h-8 py-1 px-2 text-sm max-w-[200px]"
+                              disabled={savingShopName}
+                              autoFocus
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') handleSaveShopName(s.id);
+                                if (e.key === 'Escape') handleCancelEdit();
+                              }}
+                            />
+                            <Button
+                              size="icon"
+                              variant="ghost"
+                              className="h-8 w-8 text-emerald-500 hover:text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-950/20"
+                              onClick={() => handleSaveShopName(s.id)}
+                              disabled={savingShopName}
+                            >
+                              {savingShopName ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
+                            </Button>
+                            <Button
+                              size="icon"
+                              variant="ghost"
+                              className="h-8 w-8 text-muted-foreground"
+                              onClick={handleCancelEdit}
+                              disabled={savingShopName}
+                            >
+                              <X className="h-4 w-4" />
+                            </Button>
+                          </div>
+                        ) : (
+                          <div className="flex items-center gap-2">
+                            <div>
+                              <p className="font-medium truncate">{s.name}</p>
+                              <p className="text-xs text-muted-foreground">/{s.slug}</p>
+                            </div>
+                            <Button
+                              size="icon"
+                              variant="ghost"
+                              className="h-7 w-7 text-muted-foreground hover:text-foreground opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity"
+                              onClick={() => handleStartEdit(s.id, s.name)}
+                              title="Edit shop name"
+                            >
+                              <Edit2 className="h-3.5 w-3.5" />
+                            </Button>
+                          </div>
+                        )}
                       </div>
                       <Button
                         size="sm"
                         variant={s.is_on_discover ? 'default' : 'outline'}
                         onClick={() => handleSetShopDiscover(s.id, !s.is_on_discover)}
-                        disabled={togglingShopId === s.id}
+                        disabled={togglingShopId === s.id || editingShopId === s.id}
                       >
                         {togglingShopId === s.id ? <Loader2 className="h-4 w-4 animate-spin" /> : s.is_on_discover ? 'On Discover' : 'Add to Discover'}
                       </Button>
@@ -499,16 +588,64 @@ const DevDashboardPage = () => {
             ) : (
               <div className="border rounded-lg divide-y divide-border max-h-[320px] overflow-y-auto">
                 {featuredShops.map((s) => (
-                  <div key={s.id} className="flex items-center justify-between gap-3 px-3 py-2">
-                    <div className="min-w-0">
-                      <p className="font-medium truncate">{s.name}</p>
-                      <p className="text-xs text-muted-foreground">/{s.slug}</p>
+                  <div key={s.id} className="group flex items-center justify-between gap-3 px-3 py-2">
+                    <div className="flex-1 min-w-0">
+                      {editingShopId === s.id ? (
+                        <div className="flex items-center gap-1.5 py-1">
+                          <Input
+                            type="text"
+                            value={editingShopName}
+                            onChange={(e) => setEditingShopName(e.target.value)}
+                            className="h-8 py-1 px-2 text-sm max-w-[200px]"
+                            disabled={savingShopName}
+                            autoFocus
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') handleSaveShopName(s.id);
+                              if (e.key === 'Escape') handleCancelEdit();
+                            }}
+                          />
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            className="h-8 w-8 text-emerald-500 hover:text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-950/20"
+                            onClick={() => handleSaveShopName(s.id)}
+                            disabled={savingShopName}
+                          >
+                            {savingShopName ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
+                          </Button>
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            className="h-8 w-8 text-muted-foreground"
+                            onClick={handleCancelEdit}
+                            disabled={savingShopName}
+                          >
+                            <X className="h-4 w-4" />
+                          </Button>
+                        </div>
+                      ) : (
+                        <div className="flex items-center gap-2">
+                          <div>
+                            <p className="font-medium truncate">{s.name}</p>
+                            <p className="text-xs text-muted-foreground">/{s.slug}</p>
+                          </div>
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            className="h-7 w-7 text-muted-foreground hover:text-foreground opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity"
+                            onClick={() => handleStartEdit(s.id, s.name)}
+                            title="Edit shop name"
+                          >
+                            <Edit2 className="h-3.5 w-3.5" />
+                          </Button>
+                        </div>
+                      )}
                     </div>
                     <Button
                       size="sm"
                       variant={s.is_featured ? 'default' : 'outline'}
                       onClick={() => handleToggleFeatured(s)}
-                      disabled={togglingFeaturedId === s.id}
+                      disabled={togglingFeaturedId === s.id || editingShopId === s.id}
                       className="gap-1"
                     >
                       {togglingFeaturedId === s.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Star className={`h-3.5 w-3.5 ${s.is_featured ? 'fill-current' : ''}`} />}

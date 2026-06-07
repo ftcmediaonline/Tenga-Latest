@@ -15,6 +15,7 @@ import Footer from '@/components/layout/Footer';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
 import type { Shop, Product } from '@/types';
+import PageLoader from '@/components/ui/PageLoader';
 
 const PLACEHOLDER_LOGO = 'https://placehold.co/200x200?text=Shop';
 const PLACEHOLDER_BANNER = 'https://placehold.co/1200x400?text=Shop';
@@ -274,14 +275,7 @@ const ShopPage = () => {
   }, [slugParam, user]);
 
   if (loading) {
-    return (
-      <div className="min-h-screen bg-background">
-        <Header />
-        <div className="container py-20 flex justify-center">
-          <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
-        </div>
-      </div>
-    );
+    return <PageLoader />;
   }
 
   if (!shop) {

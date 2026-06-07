@@ -10,6 +10,7 @@ import ShopCard from '@/components/shop/ShopCard';
 import { supabase } from '@/integrations/supabase/client';
 import type { Shop } from '@/types';
 import { cn } from '@/lib/utils';
+import PageLoader from '@/components/ui/PageLoader';
 
 const PLACEHOLDER_LOGO = 'https://placehold.co/200x200?text=Shop';
 const PLACEHOLDER_BANNER = 'https://placehold.co/1200x400?text=Shop';
@@ -212,9 +213,7 @@ const ShopsPage = () => {
 
         {/* Results */}
         {loading ? (
-          <div className="flex justify-center py-16">
-            <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
-          </div>
+          <PageLoader fullScreen={false} />
         ) : filteredShops.length === 0 ? (
           <div className="text-center py-16">
             <div className="inline-flex items-center justify-center h-16 w-16 rounded-full bg-secondary mb-4">

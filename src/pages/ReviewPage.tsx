@@ -14,6 +14,7 @@ import { useToast } from '@/hooks/use-toast';
 import { supabase } from '@/integrations/supabase/client';
 import type { Product, Shop } from '@/types';
 import { cn } from '@/lib/utils';
+import PageLoader from '@/components/ui/PageLoader';
 
 const PLACEHOLDER_IMAGE = 'https://placehold.co/600x600?text=Product';
 const PLACEHOLDER_LOGO = 'https://placehold.co/200x200?text=Shop';
@@ -95,11 +96,13 @@ const ReviewPage = () => {
       return;
     }
     (async () => {
-      const { data: productRow } = await supabase
+      const { data: productRows } = await supabase
         .from('products')
         .select('*, product_images(image_url)')
         .eq('slug', slug)
-        .maybeSingle();
+        .limit(1);
+
+      const productRow = productRows?.[0] || null;
 
       if (productRow) {
         setProduct(mapDbProductToProduct(productRow));
@@ -186,14 +189,7 @@ const ReviewPage = () => {
   };
 
   if (loading) {
-    return (
-      <div className="min-h-screen bg-background">
-        <Header />
-        <div className="container py-20 flex justify-center">
-          <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
-        </div>
-      </div>
-    );
+    return <PageLoader />;
   }
 
   if (!product || !shop) {

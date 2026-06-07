@@ -2,7 +2,7 @@ import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { BrowserRouter, Routes, Route } from "react-router-dom";
+import { HashRouter, Routes, Route } from "react-router-dom";
 import ScrollToTop from "@/components/ScrollToTop";
 import { CartProvider } from "@/context/CartContext";
 import { WishlistProvider } from "@/context/WishlistContext";
@@ -34,7 +34,32 @@ import WishlistPage from "./pages/WishlistPage";
 import OrderHistoryPage from "./pages/OrderHistoryPage";
 import FollowingPage from "./pages/FollowingPage";
 import ProfilePage from "./pages/ProfilePage";
+import VerifyEmailPage from "./pages/VerifyEmailPage";
 import NotFound from "./pages/NotFound";
+
+// Redirect clean routes / callbacks to hash routes for HashRouter compatibility (especially Supabase auth redirects)
+const checkAuthRedirect = () => {
+  const path = window.location.pathname;
+  const search = window.location.search;
+  const hash = window.location.hash;
+  const params = new URLSearchParams(search);
+  
+  if (path === '/auth' || path.startsWith('/auth/')) {
+    window.location.replace(`${window.location.origin}/#/auth${search}${hash}`);
+    return true;
+  }
+  
+  if (path === '/' && (params.has('code') || params.has('error') || hash.includes('access_token=') || hash.includes('error='))) {
+    if (!hash.includes('/auth')) {
+      window.location.replace(`${window.location.origin}/#/auth${search}${hash}`);
+      return true;
+    }
+  }
+  
+  return false;
+};
+
+checkAuthRedirect();
 
 const queryClient = new QueryClient();
 
@@ -42,7 +67,7 @@ const App = () => (
   <QueryClientProvider client={queryClient}>
     <ThemeProvider>
       <TooltipProvider>
-        <BrowserRouter
+        <HashRouter
           future={{
             v7_startTransition: true,
             v7_relativeSplatPath: true,
@@ -81,12 +106,13 @@ const App = () => (
               <Route path="/orders" element={<OrderHistoryPage />} />
               <Route path="/following" element={<FollowingPage />} />
               <Route path="/profile" element={<ProfilePage />} />
+              <Route path="/verify-email" element={<VerifyEmailPage />} />
               {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
               <Route path="*" element={<NotFound />} />
               </Routes>
             </WishlistProvider>
           </CartProvider>
-        </BrowserRouter>
+        </HashRouter>
       </TooltipProvider>
     </ThemeProvider>
   </QueryClientProvider>

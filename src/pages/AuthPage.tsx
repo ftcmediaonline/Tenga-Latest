@@ -24,7 +24,7 @@ function getAuthRedirectUrl(): string {
     configured && isLocal
       ? configured
       : window.location.origin.replace(/\/$/, '');
-  return `${base}/auth`;
+  return `${base}/#/auth`;
 }
 
 function hasEmailCallbackInUrl(): boolean {
@@ -149,12 +149,12 @@ const AuthPage = () => {
       // Clear session immediately so they are strictly logged out
       await supabase.auth.signOut();
       setLoading(false);
-      setPendingVerificationEmail(loginForm.email);
       toast({
         title: 'Email confirmation required',
-        description: 'Your email has not been verified. Please click the verification link in your inbox before signing in.',
+        description: 'Redirecting to verification page. Please verify your email before logging in.',
         variant: 'destructive',
       });
+      navigate(`/verify-email?email=${encodeURIComponent(loginForm.email)}`);
       return;
     }
 
@@ -200,20 +200,20 @@ const AuthPage = () => {
     }
 
     if (data.user?.identities?.length === 0) {
-      setPendingVerificationEmail(email);
       toast({
         title: 'Email already registered',
-        description: 'Sign in, or use “Resend verification email” if you have not confirmed yet.',
+        description: 'Redirecting to verification page. Please verify your email.',
         variant: 'destructive',
       });
+      navigate(`/verify-email?email=${encodeURIComponent(email)}`);
       return;
     }
 
-    setPendingVerificationEmail(email);
     toast({
       title: 'Account created',
       description: 'Check your inbox (and spam) for a verification link from Tenga.',
     });
+    navigate(`/verify-email?email=${encodeURIComponent(email)}`);
   };
 
   const handleForgotPassword = async (e: React.FormEvent) => {

@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
@@ -13,7 +13,7 @@ const videoSlides = [
   },
   {
     videoSrc: vid1,
-    shopSlug: 'knottonest',
+    shopSlug: 'knottonestbhbgmailcom',
     shopName: 'Knot to Nest',
   },
 ];
@@ -23,6 +23,54 @@ const VideoCarousel = () => {
   const [direction, setDirection] = useState(0); // -1 for left, 1 for right
   const navigate = useNavigate();
   const videoRef = useRef<HTMLVideoElement>(null);
+
+  useEffect(() => {
+    const video = videoRef.current;
+    let fallbackTimeout: NodeJS.Timeout;
+
+    const autoAdvance = () => {
+      setDirection(1);
+      setCurrentIndex((prev) => (prev + 1) % videoSlides.length);
+    };
+
+    if (video) {
+      // iOS Safari requires explicit muted attribute setting on DOM node before play()
+      video.muted = true;
+      video.defaultMuted = true;
+      
+      const playPromise = video.play();
+      if (playPromise !== undefined) {
+        playPromise.catch((error) => {
+          console.warn("iOS Auto-play prevented or delayed:", error);
+          // Fallback: Auto-advance after 6 seconds if video is blocked
+          fallbackTimeout = setTimeout(autoAdvance, 6000);
+        });
+      }
+    } else {
+      fallbackTimeout = setTimeout(autoAdvance, 6000);
+    }
+
+    // Try playing on user interaction if autoplay was blocked
+    const playVideoOnInteraction = () => {
+      const activeVideo = videoRef.current;
+      if (activeVideo && activeVideo.paused) {
+        activeVideo.play()
+          .then(() => {
+            if (fallbackTimeout) clearTimeout(fallbackTimeout);
+          })
+          .catch(() => {});
+      }
+    };
+
+    window.addEventListener('click', playVideoOnInteraction, { once: true });
+    window.addEventListener('touchstart', playVideoOnInteraction, { once: true });
+
+    return () => {
+      if (fallbackTimeout) clearTimeout(fallbackTimeout);
+      window.removeEventListener('click', playVideoOnInteraction);
+      window.removeEventListener('touchstart', playVideoOnInteraction);
+    };
+  }, [currentIndex]);
 
   const handleVideoEnded = () => {
     setDirection(1);
@@ -78,7 +126,7 @@ const VideoCarousel = () => {
     <section className="py-6 sm:py-10 bg-background overflow-hidden w-full">
       <div
         onClick={handleSlideClick}
-        className="group relative overflow-hidden bg-black aspect-[97/25] select-none cursor-pointer w-full"
+        className="group relative overflow-hidden bg-black aspect-[97/40] select-none cursor-pointer w-full"
       >
         {/* Slides */}
         <div className="absolute inset-0 w-full h-full">
@@ -99,6 +147,7 @@ const VideoCarousel = () => {
                 autoPlay
                 muted
                 playsInline
+                preload="auto"
                 onEnded={handleVideoEnded}
                 className="w-full h-full object-cover pointer-events-none"
               />

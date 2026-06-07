@@ -7,6 +7,7 @@ import Footer from '@/components/layout/Footer';
 import ProductCard from '@/components/product/ProductCard';
 import { supabase } from '@/integrations/supabase/client';
 import type { Product, Shop } from '@/types';
+import PageLoader from '@/components/ui/PageLoader';
 
 const PLACEHOLDER_IMAGE = 'https://placehold.co/600x600?text=Product';
 const PLACEHOLDER_LOGO = 'https://placehold.co/200x200?text=Shop';
@@ -153,9 +154,7 @@ const TrendingPage = () => {
 
         {/* Trending Products */}
         {loading ? (
-          <div className="flex justify-center py-16">
-            <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
-          </div>
+          <PageLoader fullScreen={false} />
         ) : (
         <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
           {trendingProducts.map((product, index) => {

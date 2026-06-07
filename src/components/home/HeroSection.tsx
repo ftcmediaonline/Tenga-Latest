@@ -1,4 +1,6 @@
 import { motion } from 'framer-motion';
+import { Link } from 'react-router-dom';
+import { ArrowRight } from 'lucide-react';
 import laptopImage from '@/assets/1.png';
 import mobileImage from '@/assets/2.png';
 
@@ -35,6 +37,28 @@ const HeroSection = () => {
             >
               Zimbabwe's biggest Virtual Mall
             </motion.p>
+
+            {/* CTA Buttons */}
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.8, delay: 0.2, ease: 'easeOut' }}
+              className="flex flex-wrap items-center justify-center gap-4 mt-6 sm:mt-8 relative z-10"
+            >
+              <Link
+                to="/shops"
+                className="inline-flex items-center justify-center px-6 py-3 text-sm sm:px-8 sm:py-4 sm:text-base font-bold text-white bg-primary hover:bg-primary/95 transition-all rounded-xl sm:rounded-2xl shadow-md hover:shadow-lg hover:-translate-y-0.5 active:translate-y-0 active:scale-[0.98]"
+              >
+                Explore Shops
+              </Link>
+              <Link
+                to="/open-shop"
+                className="inline-flex items-center justify-center px-6 py-3 text-sm sm:px-8 sm:py-4 sm:text-base font-bold text-primary bg-background border border-primary/20 hover:bg-secondary/50 dark:hover:bg-secondary/20 dark:text-foreground transition-all rounded-xl sm:rounded-2xl shadow-sm hover:shadow-md hover:-translate-y-0.5 active:translate-y-0 active:scale-[0.98] gap-2"
+              >
+                Open Your Shop
+                <ArrowRight className="h-4 w-4 sm:h-5 sm:w-5" />
+              </Link>
+            </motion.div>
 
             {/* Mobile Mockup Image */}
             <motion.div
@@ -83,6 +107,28 @@ const HeroSection = () => {
             >
               Zimbabwe's biggest Virtual Mall
             </motion.p>
+
+            {/* CTA Buttons */}
+            <motion.div
+              initial={{ opacity: 0, y: 30 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.8, delay: 0.2, ease: 'easeOut' }}
+              className="flex flex-wrap items-center justify-center gap-4 mt-8 relative z-10"
+            >
+              <Link
+                to="/shops"
+                className="inline-flex items-center justify-center px-8 py-4 text-base font-bold text-white bg-primary hover:bg-primary/95 transition-all rounded-xl sm:rounded-2xl shadow-md hover:shadow-lg hover:-translate-y-0.5 active:translate-y-0 active:scale-[0.98]"
+              >
+                Explore Shops
+              </Link>
+              <Link
+                to="/open-shop"
+                className="inline-flex items-center justify-center px-8 py-4 text-base font-bold text-primary bg-background border border-primary/20 hover:bg-secondary/50 dark:hover:bg-secondary/20 dark:text-foreground transition-all rounded-xl sm:rounded-2xl shadow-sm hover:shadow-md hover:-translate-y-0.5 active:translate-y-0 active:scale-[0.98] gap-2"
+              >
+                Open Your Shop
+                <ArrowRight className="h-5 w-5" />
+              </Link>
+            </motion.div>
 
             {/* Laptop Mockup Image */}
             <motion.div

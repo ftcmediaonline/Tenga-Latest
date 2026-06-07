@@ -11,6 +11,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
 import { useToast } from '@/hooks/use-toast';
 import type { Shop } from '@/types';
+import PageLoader from '@/components/ui/PageLoader';
 
 const PLACEHOLDER_LOGO = 'https://placehold.co/200x200?text=Shop';
 const PLACEHOLDER_BANNER = 'https://placehold.co/1200x400?text=Shop';
@@ -162,14 +163,7 @@ const FollowingPage = () => {
   }
 
   if (loading) {
-    return (
-      <div className="min-h-screen bg-background">
-        <Header />
-        <div className="container py-20 flex justify-center">
-          <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
-        </div>
-      </div>
-    );
+    return <PageLoader />;
   }
 
   return (
