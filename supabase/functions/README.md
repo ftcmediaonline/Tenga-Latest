@@ -57,7 +57,7 @@ Deploy **`iveri-gateway`** alongside `send-email`.
 - `20260336000000_add_iveri_payment_columns.sql` — `payment_method`, `payment_status`, `iveri_transaction_*`
 - `20260337000000_orders_iveri_trace_nonce.sql` — `iveri_merchant_trace`, `checkout_nonce`
 
-**Lite compliance:** mandatory line items, `Lite_Merchant_Trace`, `Tenga_Checkout_Nonce`, SHA-256 token, Nedbank default gateway URL.
+**Lite compliance:** mandatory line items, `Lite_Merchant_Trace`, `Lite_Merchant_Nonce`, SHA-256 token, Nedbank default gateway URL.
 
 ```bash
 npx supabase functions deploy iveri-gateway

@@ -1,6 +1,6 @@
 /** iVeri Lite field names and helpers (see iVeri Lite Developer Guide). */
 
-export const IVERI_NONCE_FIELD = 'Tenga_Checkout_Nonce';
+export const IVERI_NONCE_FIELD = 'Lite_Merchant_Nonce';
 
 /** Max 20 chars per Ecom_ConsumerOrderID / MerchantReference. */
 export function generateIveriOrderNumber(): string {

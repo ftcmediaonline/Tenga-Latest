@@ -853,6 +853,8 @@ async function handleWelcomeNewsletter(_ctx: AuthContext, body: Record<string, u
 
   if (!email || !isValidEmail(email)) return jsonResponse({ error: "Valid email is required" }, 400);
 
+  const siteUrl = (Deno.env.get("SITE_URL") || Deno.env.get("VITE_SITE_URL") || "https://tengavm.co.zw").replace(/\/$/, "");
+
   const html = wrapInTengaTemplate(`
     <span class="accent-badge">Welcome Offer</span>
     <h2 class="headline">Welcome to Tenga!</h2>
@@ -868,7 +870,7 @@ async function handleWelcomeNewsletter(_ctx: AuthContext, body: Record<string, u
 
     <p>Simply enter this code at checkout to claim your 20% discount.</p>
     <div style="margin: 24px 0; text-align: center;">
-      <a href="http://localhost:8080" class="btn-primary">Start Shopping Now</a>
+      <a href="${siteUrl}" class="btn-primary">Start Shopping Now</a>
     </div>
     <p style="color: #64748b; font-size: 14px; margin-top: 24px;">This offer is valid for a limited time only. If you need any assistance, our help center is always here for you. — The Tenga team</p>
   `, "Welcome to Tenga Virtual Mall! — 20% Off");

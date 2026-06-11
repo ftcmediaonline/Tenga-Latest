@@ -450,28 +450,120 @@ const AdminDashboardPage = () => {
     } else toast({ title: 'Failed to approve', description: error.message, variant: 'destructive' });
   };
 
+  const deleteShopCascade = async (shopId: string): Promise<{ error: any }> => {
+    try {
+      // 1. Get product IDs
+      const { data: shopProducts } = await supabase
+        .from('products')
+        .select('id')
+        .eq('shop_id', shopId);
+      const productIds = shopProducts?.map((p) => p.id) || [];
+
+      // 2. Get order IDs
+      const { data: shopOrders } = await supabase
+        .from('orders')
+        .select('id')
+        .eq('shop_id', shopId);
+      const orderIds = shopOrders?.map((o) => o.id) || [];
+
+      // 3. Get conversation IDs
+      const { data: shopConvs } = await supabase
+        .from('shop_conversations')
+        .select('id')
+        .eq('shop_id', shopId);
+      const convIds = shopConvs?.map((c) => c.id) || [];
+
+      // 4. Delete order items
+      if (orderIds.length > 0) {
+        const { error: err } = await supabase.from('order_items').delete().in('order_id', orderIds);
+        if (err) return { error: err };
+      }
+
+      // 5. Delete orders
+      const { error: orderErr } = await supabase.from('orders').delete().eq('shop_id', shopId);
+      if (orderErr) return { error: orderErr };
+
+      // 6. Delete shop messages
+      if (convIds.length > 0) {
+        const { error: msgErr } = await supabase.from('shop_messages').delete().in('conversation_id', convIds);
+        if (msgErr) return { error: msgErr };
+      }
+
+      // 7. Delete conversations
+      const { error: convErr } = await supabase.from('shop_conversations').delete().eq('shop_id', shopId);
+      if (convErr) return { error: convErr };
+
+      // 8. Delete shop followers
+      const { error: folErr } = await supabase.from('shop_followers').delete().eq('shop_id', shopId);
+      if (folErr) return { error: folErr };
+
+      // 9. Delete product cart items, images, likes, engagement, saved_products, variants & options, reviews
+      if (productIds.length > 0) {
+        await supabase.from('cart_items').delete().in('product_id', productIds);
+        await supabase.from('product_images').delete().in('product_id', productIds);
+        await supabase.from('product_engagement').delete().in('product_id', productIds);
+        await supabase.from('product_likes').delete().in('product_id', productIds);
+        await supabase.from('saved_products').delete().in('product_id', productIds);
+
+        // Variants and Options
+        const { data: variants } = await supabase
+          .from('product_variants')
+          .select('id')
+          .in('product_id', productIds);
+        if (variants && variants.length > 0) {
+          const variantIds = variants.map((v) => v.id);
+          await supabase.from('variant_options').delete().in('variant_id', variantIds);
+          await supabase.from('product_variants').delete().in('id', variantIds);
+        }
+
+        // Reviews and Review Images
+        const { data: shopReviews } = await supabase
+          .from('reviews')
+          .select('id')
+          .in('product_id', productIds);
+        if (shopReviews && shopReviews.length > 0) {
+          const reviewIds = shopReviews.map((r) => r.id);
+          await supabase.from('review_images').delete().in('review_id', reviewIds);
+          await supabase.from('reviews').delete().in('id', reviewIds);
+        }
+      }
+
+      // 10. Delete products
+      const { error: prodErr } = await supabase.from('products').delete().eq('shop_id', shopId);
+      if (prodErr) return { error: prodErr };
+
+      // 11. Delete the shop itself
+      const { error: shopErr } = await supabase.from('shops').delete().eq('id', shopId);
+      if (shopErr) return { error: shopErr };
+
+      return { error: null };
+    } catch (e) {
+      return { error: e };
+    }
+  };
+
   const handleReject = async (shop: Shop) => {
     if (!confirm(`Are you sure you want to reject "${shop.name}"? This will remove the shop application.`)) return;
     setRejectingId(shop.id);
-    const { error } = await supabase.from('shops').delete().eq('id', shop.id);
+    const { error } = await deleteShopCascade(shop.id);
     setRejectingId(null);
     if (!error) {
       setPendingShops((prev) => prev.filter((s) => s.id !== shop.id));
       setAllShops((prev) => prev.filter((s) => s.id !== shop.id));
       toast({ title: 'Shop rejected', description: 'The shop application has been removed.' });
-    } else toast({ title: 'Failed to reject', description: error.message, variant: 'destructive' });
+    } else toast({ title: 'Failed to reject', description: error.message || String(error), variant: 'destructive' });
   };
 
   const handleDeleteShop = async (shop: Shop) => {
     if (!confirm(`Are you sure you want to permanently delete "${shop.name}"? This cannot be undone.`)) return;
     setDeletingShopId(shop.id);
-    const { error } = await supabase.from('shops').delete().eq('id', shop.id);
+    const { error } = await deleteShopCascade(shop.id);
     setDeletingShopId(null);
     if (!error) {
       setAllShops((prev) => prev.filter((s) => s.id !== shop.id));
       setPendingShops((prev) => prev.filter((s) => s.id !== shop.id));
       toast({ title: 'Shop deleted', description: `${shop.name} has been removed.` });
-    } else toast({ title: 'Failed to delete shop', description: error.message, variant: 'destructive' });
+    } else toast({ title: 'Failed to delete shop', description: error.message || String(error), variant: 'destructive' });
   };
 
   const handleSetAdmin = async (profile: ProfileRow, makeAdmin: boolean) => {

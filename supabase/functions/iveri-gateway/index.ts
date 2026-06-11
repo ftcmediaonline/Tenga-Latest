@@ -13,7 +13,7 @@ function getCleanEnv(key: string): string {
   return value.replace(/^\uFEFF/, "").trim();
 }
 
-const NONCE_FIELD = "Tenga_Checkout_Nonce";
+const NONCE_FIELD = "Lite_Merchant_Nonce";
 const DEFAULT_GATEWAY_URL = "https://portal.nedsecure.co.za/Lite/Authorise.aspx";
 
 interface CartItem {
@@ -287,7 +287,19 @@ Deno.serve(async (req) => {
         return json({ error: "Invalid checkout nonce" }, 403);
       }
 
-      const paymentStatus = mapPaymentStatus(rawStatus);
+      // Security validation: Query the iVeri gateway directly to verify payment success
+      // to prevent client-side payment status spoofing.
+      let paymentStatus = mapPaymentStatus(rawStatus);
+      if (paymentStatus === "paid") {
+        const info = await queryAuthoriseInfo(gatewayUrl, applicationId, orderNumber);
+        if (info.ok && info.rawStatus) {
+          paymentStatus = mapPaymentStatus(info.rawStatus);
+        } else {
+          console.warn(`[iVeri Security] Could not verify payment status with gateway for order ${orderNumber}. Failing safe.`);
+          paymentStatus = "failed";
+        }
+      }
+
       if (paymentStatus !== "paid") {
         await supabaseAdmin
           .from("orders")

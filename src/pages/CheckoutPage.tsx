@@ -133,33 +133,29 @@ const CheckoutPage = () => {
       const input = document.createElement('input');
       input.type = 'hidden';
       input.name = key;
+      input.id = key; // CRITICAL: jquery.litebox.js matches fields using startsWith on their element IDs
       input.value = String(val);
       payForm.appendChild(input);
     });
 
-    const triggerLink = document.createElement('a');
-    triggerLink.id = 'iveri-litebox-button';
-    triggerLink.href = '#';
-    triggerLink.textContent = 'Pay';
-    triggerLink.style.display = 'none';
-    payForm.appendChild(triggerLink);
+    const triggerBtn = document.createElement('button');
+    triggerBtn.type = 'button';
+    triggerBtn.id = 'iveri-litebox-button';
+    triggerBtn.style.display = 'none';
+    payForm.appendChild(triggerBtn);
 
     document.body.appendChild(payForm);
 
-    const loadStylesheet = (href: string): Promise<void> => {
-      return new Promise((resolve, reject) => {
-        if (document.querySelector(`link[href="${href}"]`)) {
-          resolve();
-          return;
-        }
-        const link = document.createElement('link');
-        link.rel = 'stylesheet';
-        link.href = href;
-        link.onload = () => resolve();
-        link.onerror = () => reject(new Error(`Failed to load CSS: ${href}`));
-        document.head.appendChild(link);
-      });
-    };
+    const liteboxDiv = document.getElementById('iveri-litebox');
+    if (liteboxDiv) {
+      liteboxDiv.innerHTML = '';
+      liteboxDiv.className = '';
+      liteboxDiv.removeAttribute('data-backdrop');
+      liteboxDiv.removeAttribute('data-keyboard');
+      liteboxDiv.removeAttribute('data-bs-backdrop');
+      liteboxDiv.removeAttribute('data-bs-keyboard');
+      liteboxDiv.style.cssText = '';
+    }
 
     const loadScript = (url: string): Promise<void> => {
       return new Promise((resolve, reject) => {
@@ -193,7 +189,6 @@ const CheckoutPage = () => {
 
         const $ = (window as any).$;
 
-        await loadStylesheet('https://cdnjs.cloudflare.com/ajax/libs/bootstrap/5.3.0/css/bootstrap.min.css');
         await loadScript('https://cdnjs.cloudflare.com/ajax/libs/bootstrap/5.3.0/js/bootstrap.bundle.min.js');
         await loadScript(`${portalUrl}/scripts/jquery/js/jquery.litebox.js`);
 
@@ -265,16 +260,52 @@ const CheckoutPage = () => {
           setPlacing(false);
         });
 
-        // 6. Initialize iVeri LiteBox
+        // 6. Initialize iVeri LiteBox with explicit form ID
         if (typeof (window as any).liteboxInitialise === 'function') {
-          (window as any).liteboxInitialise(portalUrl);
+          (window as any).liteboxInitialise(portalUrl, 'tenga-iveri-form');
         }
 
-        // 7. Fire click event to trigger pop up modal!
-        setTimeout(() => {
+        // 7. Fire click event only after the iframe is fully loaded to its cross-origin domain
+        // (to prevent 'postMessage' target origin mismatch when the iframe is still on about:blank)
+        let attempts = 0;
+        const maxAttempts = 100; // 100 * 50ms = 5 seconds max wait
+        
+        const triggerClickWhenReady = () => {
+          const iframe = document.getElementById('iveri-litebox-iframe') as HTMLIFrameElement | null;
           const btn = document.getElementById('iveri-litebox-button');
-          if (btn) btn.click();
-        }, 150);
+          
+          if (attempts >= maxAttempts) {
+            console.warn('[iVeri LiteBox] Timeout waiting for iframe to load. Falling back to direct redirect...');
+            payForm.submit();
+            return;
+          }
+
+          if (!iframe || !btn) {
+            attempts++;
+            setTimeout(triggerClickWhenReady, 50);
+            return;
+          }
+
+          let isCross = false;
+          try {
+            // Attempt to access contentWindow's location.
+            // If it succeeds, it's same-origin (about:blank).
+            // If it throws a SecurityError/CORS error, it has navigated cross-origin to iVeri.
+            const _unused = iframe.contentWindow?.location.href;
+          } catch (e) {
+            isCross = true;
+          }
+
+          if (isCross) {
+            console.log('[iVeri LiteBox] Iframe loaded cross-origin. Triggering click...');
+            btn.click();
+          } else {
+            attempts++;
+            setTimeout(triggerClickWhenReady, 50);
+          }
+        };
+
+        triggerClickWhenReady();
 
       } catch (err) {
         console.error('[iVeri LiteBox] Loading failed, running direct redirect fallback:', err);

@@ -22,25 +22,18 @@ import PageLoader from '@/components/ui/PageLoader';
 const PLACEHOLDER_IMAGE = 'https://placehold.co/600x600?text=Product';
 const PLACEHOLDER_LOGO = 'https://placehold.co/200x200?text=Shop';
 
-function mapDbProductToProduct(row: {
-  id: string;
-  shop_id: string;
-  name: string;
-  slug: string;
-  price: number;
-  original_price: number | null;
-  description: string | null;
-  in_stock: boolean | null;
-  stock_count: number | null;
-  rating: number | null;
-  review_count: number | null;
-  like_count: number | null;
-  created_at: string | null;
-  product_images?: { image_url: string }[];
-}): Product {
+function mapDbProductToProduct(row: any): Product {
   const images = row.product_images?.length
-    ? row.product_images.map((i) => i.image_url)
+    ? row.product_images.map((i: any) => i.image_url)
     : [PLACEHOLDER_IMAGE];
+  
+  const variants = row.product_variants?.map((v: any) => ({
+    id: v.id,
+    name: v.name,
+    type: v.type as 'size' | 'color' | 'style',
+    options: v.variant_options?.map((o: any) => o.value) || [],
+  })) || [];
+
   return {
     id: row.id,
     shopId: row.shop_id,
@@ -51,6 +44,7 @@ function mapDbProductToProduct(row: {
     images,
     description: row.description ?? '',
     category: '',
+    variants,
     inStock: row.in_stock ?? true,
     stockCount: row.stock_count ?? undefined,
     rating: row.rating ?? 0,
@@ -141,7 +135,7 @@ const ProductPage = () => {
     (async () => {
       const { data: productRows } = await supabase
         .from('products')
-        .select('*, product_images(image_url)')
+        .select('*, product_images(image_url), product_variants(id, name, type, variant_options(id, value))')
         .eq('slug', slug)
         .limit(1);
 

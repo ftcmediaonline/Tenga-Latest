@@ -39,6 +39,11 @@ import { Checkbox } from '@/components/ui/checkbox';
 
 type Shop = Tables<'shops'>;
 type Product = Tables<'products'>;
+type ProductWithVariants = Tables<'products'> & {
+  product_variants?: (Tables<'product_variants'> & {
+    variant_options?: Tables<'variant_options'>[];
+  })[];
+};
 type Review = Tables<'reviews'> & { products?: { name: string } | null };
 type OrderRow = Tables<'orders'> & {
   order_items?: (Tables<'order_items'> & { products?: { name: string } | null })[];
@@ -62,7 +67,7 @@ const SellerDashboardPage = () => {
   const navigate = useNavigate();
   const [shop, setShop] = useState<Shop | null>(null);
   const [shopLoading, setShopLoading] = useState(true);
-  const [products, setProducts] = useState<Product[]>([]);
+  const [products, setProducts] = useState<ProductWithVariants[]>([]);
   const [productsLoading, setProductsLoading] = useState(false);
   const [reviews, setReviews] = useState<Review[]>([]);
   const [reviewsLoading, setReviewsLoading] = useState(false);
@@ -70,9 +75,15 @@ const SellerDashboardPage = () => {
   const [addName, setAddName] = useState('');
   const [addPrice, setAddPrice] = useState('');
   const [addDescription, setAddDescription] = useState('');
+  const [addSizes, setAddSizes] = useState('');
   const [addImageFile, setAddImageFile] = useState<File | null>(null);
   const [adding, setAdding] = useState(false);
   const [addError, setAddError] = useState<string | null>(null);
+  
+  const [sizesOpen, setSizesOpen] = useState(false);
+  const [selectedProduct, setSelectedProduct] = useState<ProductWithVariants | null>(null);
+  const [manageSizesText, setManageSizesText] = useState('');
+  const [savingSizes, setSavingSizes] = useState(false);
   const [replyDraft, setReplyDraft] = useState<Record<string, string>>({});
   const [replyingId, setReplyingId] = useState<string | null>(null);
   const [editingReplyId, setEditingReplyId] = useState<string | null>(null);
@@ -211,14 +222,15 @@ const SellerDashboardPage = () => {
     setProductsLoading(true);
     supabase
       .from('products')
-      .select('*')
+      .select('*, product_variants(id, name, type, variant_options(id, value))')
       .eq('shop_id', shop.id)
       .order('created_at', { ascending: false })
       .then(({ data }) => {
-        setProducts(data ?? []);
+        setProducts((data as any) ?? []);
         setProductsLoading(false);
       });
   }, [shop]);
+
 
   useEffect(() => {
     if (!shop) return;
@@ -416,21 +428,126 @@ const SellerDashboardPage = () => {
         product_id: product.id,
         image_url: urlData.publicUrl,
       });
+
+      // Insert sizes if any are provided
+      const sizeList = addSizes.split(',').map(s => s.trim()).filter(Boolean);
+      if (sizeList.length > 0) {
+        const { data: variant, error: varErr } = await supabase
+          .from('product_variants')
+          .insert({
+            product_id: product.id,
+            name: 'Size',
+            type: 'size',
+          })
+          .select('id')
+          .single();
+
+        if (varErr) {
+          console.warn('[Add Product] Size variant insert failed:', varErr);
+        } else if (variant) {
+          const optionsToInsert = sizeList.map(val => ({
+            variant_id: variant.id,
+            value: val,
+          }));
+          await supabase.from('variant_options').insert(optionsToInsert);
+        }
+      }
+
       const { data: updated } = await supabase
         .from('products')
-        .select('*')
+        .select('*, product_variants(id, name, type, variant_options(id, value))')
         .eq('shop_id', shop.id)
         .order('created_at', { ascending: false });
-      setProducts(updated ?? []);
+      setProducts((updated as any) ?? []);
       setAddOpen(false);
       setAddName('');
       setAddPrice('');
       setAddDescription('');
-      setAddImageFile(null);
+      setAddSizes('');
+      addImageFile && setAddImageFile(null);
     } catch (err) {
       setAddError(err instanceof Error ? err.message : 'Something went wrong.');
     }
     setAdding(false);
+  };
+
+  const openManageSizes = (p: ProductWithVariants) => {
+    setSelectedProduct(p);
+    const sizeVar = p.product_variants?.find(v => v.type === 'size');
+    const existingSizes = sizeVar?.variant_options?.map(o => o.value).join(', ') || '';
+    setManageSizesText(existingSizes);
+    setSizesOpen(true);
+  };
+
+  const handleSaveSizes = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedProduct || !shop) return;
+    setSavingSizes(true);
+    const sizesStr = manageSizesText.trim();
+    const sizeList = sizesStr.split(',').map(s => s.trim()).filter(Boolean);
+
+    try {
+      // 1. Delete existing size variants and their options safely
+      const { data: existingVars } = await supabase
+        .from('product_variants')
+        .select('id')
+        .eq('product_id', selectedProduct.id)
+        .eq('type', 'size');
+
+      if (existingVars && existingVars.length > 0) {
+        const varIds = existingVars.map(v => v.id);
+        await supabase.from('variant_options').delete().in('variant_id', varIds);
+        await supabase.from('product_variants').delete().in('id', varIds);
+      }
+
+      // 2. Insert new size variants if any are provided
+      if (sizeList.length > 0) {
+        const { data: variant, error: varErr } = await supabase
+          .from('product_variants')
+          .insert({
+            product_id: selectedProduct.id,
+            name: 'Size',
+            type: 'size',
+          })
+          .select('id')
+          .single();
+
+        if (varErr) throw varErr;
+
+        if (variant) {
+          const optionsToInsert = sizeList.map(val => ({
+            variant_id: variant.id,
+            value: val,
+          }));
+          const { error: optErr } = await supabase.from('variant_options').insert(optionsToInsert);
+          if (optErr) throw optErr;
+        }
+      }
+
+      // 3. Refresh products state
+      const { data: updated } = await supabase
+        .from('products')
+        .select('*, product_variants(id, name, type, variant_options(id, value))')
+        .eq('shop_id', shop.id)
+        .order('created_at', { ascending: false });
+      setProducts((updated as any) ?? []);
+
+      toast({
+        title: 'Sizes updated',
+        description: `Sizes for "${selectedProduct.name}" have been updated successfully.`,
+      });
+      setSizesOpen(false);
+      setSelectedProduct(null);
+      setManageSizesText('');
+    } catch (err) {
+      toast({
+        title: 'Error updating sizes',
+        description: err instanceof Error ? err.message : 'Something went wrong.',
+        variant: 'destructive',
+      });
+    } finally {
+      setSavingSizes(false);
+    }
   };
 
   const handleReply = async (reviewId: string) => {
@@ -612,6 +729,16 @@ const SellerDashboardPage = () => {
                         />
                       </div>
                       <div>
+                        <Label htmlFor="addSizes">Sizes (optional, comma-separated)</Label>
+                        <Input
+                          id="addSizes"
+                          value={addSizes}
+                          onChange={(e) => setAddSizes(e.target.value)}
+                          placeholder="e.g. S, M, L, XL or 38, 39, 40"
+                          className="mt-1"
+                        />
+                      </div>
+                      <div>
                         <Label>Product image *</Label>
                         <div className="mt-1 flex items-center gap-2">
                           <Input
@@ -662,18 +789,35 @@ const SellerDashboardPage = () => {
                         key={p.id}
                         className="flex items-center justify-between rounded-lg border border-border p-3"
                       >
-                        <div>
-                          <p className="font-medium">{p.name}</p>
-                          <p className="text-sm text-muted-foreground">
-                            ${Number(p.price).toFixed(2)}
-                            {p.description && ` · ${p.description.slice(0, 50)}${p.description.length > 50 ? '…' : ''}`}
-                          </p>
+                        <div className="flex-1 min-w-0 pr-4">
+                          <p className="font-medium truncate">{p.name}</p>
+                          <div className="text-sm text-muted-foreground flex flex-wrap gap-x-2 gap-y-1 items-center mt-0.5">
+                            <span>${Number(p.price).toFixed(2)}</span>
+                            {p.description && (
+                              <span className="truncate max-w-[200px] sm:max-w-md">
+                                · {p.description.slice(0, 50)}{p.description.length > 50 ? '…' : ''}
+                              </span>
+                            )}
+                            {p.product_variants && p.product_variants.length > 0 && p.product_variants.map(v => {
+                              const opts = v.variant_options?.map(o => o.value).join(', ');
+                              return opts ? (
+                                <span key={v.id} className="inline-flex items-center gap-1 rounded bg-secondary px-1.5 py-0.5 text-xs font-medium text-secondary-foreground border border-border">
+                                  {v.name}: {opts}
+                                </span>
+                              ) : null;
+                            })}
+                          </div>
                         </div>
-                        <Button variant="ghost" size="sm" asChild>
-                          <Link to={`/product/${p.slug}`} target="_blank" rel="noopener noreferrer">
-                            View
-                          </Link>
-                        </Button>
+                        <div className="flex items-center gap-2">
+                          <Button variant="outline" size="sm" onClick={() => openManageSizes(p)}>
+                            Sizes
+                          </Button>
+                          <Button variant="ghost" size="sm" asChild>
+                            <Link to={`/product/${p.slug}`} target="_blank" rel="noopener noreferrer">
+                              View
+                            </Link>
+                          </Button>
+                        </div>
                       </li>
                     ))}
                   </ul>
@@ -1211,6 +1355,53 @@ const SellerDashboardPage = () => {
             </Card>
           </TabsContent>
         </Tabs>
+
+        <Dialog open={sizesOpen} onOpenChange={setSizesOpen}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Manage product sizes</DialogTitle>
+              <DialogDescription>
+                Configure the available sizes for "{selectedProduct?.name}". Enter sizes as a comma-separated list.
+              </DialogDescription>
+            </DialogHeader>
+            <form onSubmit={handleSaveSizes} className="space-y-4">
+              <div>
+                <Label htmlFor="manageSizes">Available Sizes (comma-separated)</Label>
+                <Input
+                  id="manageSizes"
+                  value={manageSizesText}
+                  onChange={(e) => setManageSizesText(e.target.value)}
+                  placeholder="e.g. S, M, L, XL or 38, 39, 40, 41"
+                  className="mt-1"
+                />
+                <p className="text-xs text-muted-foreground mt-1">
+                  Leave empty to remove all sizes for this product.
+                </p>
+              </div>
+              <div className="flex justify-end gap-2 pt-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => {
+                    setSizesOpen(false);
+                    setSelectedProduct(null);
+                    setManageSizesText('');
+                  }}
+                  disabled={savingSizes}
+                >
+                  Cancel
+                </Button>
+                <Button type="submit" disabled={savingSizes}>
+                  {savingSizes ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    'Save sizes'
+                  )}
+                </Button>
+              </div>
+            </form>
+          </DialogContent>
+        </Dialog>
       </main>
       <Footer />
     </div>
