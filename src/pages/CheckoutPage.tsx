@@ -18,12 +18,9 @@ import { useToast } from '@/hooks/use-toast';
 import { sendTransactionalEmail } from '@/utils/emailService';
 import {
   generateIveriOrderNumber,
-  IVERI_NONCE_FIELD,
-  isIveriPaymentSuccess,
   loadIveriPendingOrder,
   parseIveriFromUrl,
   saveIveriCheckoutSession,
-  verifyIveriNonce,
   type IveriPendingOrder,
 } from '@/utils/iveri';
 
@@ -69,16 +66,25 @@ const CheckoutPage = () => {
 
   useEffect(() => {
     const status = searchParams.get('status');
-    if (status !== 'failed') return;
+    if (status === 'failed') {
+      navigate(`/order-failed?${searchParams.toString()}`);
+      return;
+    }
 
-    const parsed = parseIveriFromUrl(searchParams.toString());
-    toast({
-      title: 'Payment not completed',
-      description: parsed.description || 'Your payment was declined or cancelled. You can try again.',
-      variant: 'destructive',
-    });
-    setSearchParams({}, { replace: true });
-  }, [searchParams, setSearchParams, toast]);
+    const retryOrderNumber = searchParams.get('retry');
+    if (retryOrderNumber) {
+      const saved = loadIveriPendingOrder<IveriPendingOrder>(retryOrderNumber);
+      if (saved) {
+        setForm(saved.shippingAddress);
+        setShippingMethod(saved.shippingMethod);
+        toast({
+          title: 'Form restored',
+          description: 'Your shipping details have been restored from the previous attempt.',
+        });
+      }
+      setSearchParams({}, { replace: true });
+    }
+  }, [searchParams, setSearchParams, toast, navigate]);
 
   const updateField = (field: keyof AddressForm, value: string) => {
     setForm(prev => ({ ...prev, [field]: value }));
@@ -87,35 +93,11 @@ const CheckoutPage = () => {
     }
   };
 
-  const confirmPaymentOnServer = async (
-    orderNumber: string,
-    checkoutNonce: string,
-    litePaymentCardStatus: string,
-    transactionIndex?: string | null,
-  ) => {
-    const { data, error } = await supabase.functions.invoke('iveri-gateway', {
-      body: {
-        action: 'confirm-payment',
-        orderNumber,
-        checkoutNonce,
-        litePaymentCardStatus,
-        transactionIndex: transactionIndex ?? undefined,
-      },
-    });
-    if (error || !data?.success) {
-      console.warn('[iVeri] confirm-payment:', error || data);
-    }
-    return data;
-  };
-
-  const triggerLiteBoxPayment = (
+  const triggerRedirectPayment = (
     gatewayUrl: string,
-    portalUrl: string,
     formFields: Record<string, string>,
-    addressData: AddressForm,
     orderNumber: string,
     checkoutNonce: string,
-    merchantTrace: string,
     pendingOrder: IveriPendingOrder,
   ) => {
     saveIveriCheckoutSession(orderNumber, checkoutNonce, pendingOrder);
@@ -133,187 +115,12 @@ const CheckoutPage = () => {
       const input = document.createElement('input');
       input.type = 'hidden';
       input.name = key;
-      input.id = key; // CRITICAL: jquery.litebox.js matches fields using startsWith on their element IDs
       input.value = String(val);
       payForm.appendChild(input);
     });
 
-    const triggerBtn = document.createElement('button');
-    triggerBtn.type = 'button';
-    triggerBtn.id = 'iveri-litebox-button';
-    triggerBtn.style.display = 'none';
-    payForm.appendChild(triggerBtn);
-
     document.body.appendChild(payForm);
-
-    const liteboxDiv = document.getElementById('iveri-litebox');
-    if (liteboxDiv) {
-      liteboxDiv.innerHTML = '';
-      liteboxDiv.className = '';
-      liteboxDiv.removeAttribute('data-backdrop');
-      liteboxDiv.removeAttribute('data-keyboard');
-      liteboxDiv.removeAttribute('data-bs-backdrop');
-      liteboxDiv.removeAttribute('data-bs-keyboard');
-      liteboxDiv.style.cssText = '';
-    }
-
-    const loadScript = (url: string): Promise<void> => {
-      return new Promise((resolve, reject) => {
-        const scripts = document.getElementsByTagName('script');
-        for (let i = 0; i < scripts.length; i++) {
-          if (scripts[i].src === url) {
-            resolve();
-            return;
-          }
-        }
-        const script = document.createElement('script');
-        script.src = url;
-        script.onload = () => resolve();
-        script.onerror = () => reject(new Error(`Failed to load script: ${url}`));
-        document.head.appendChild(script);
-      });
-    };
-
-    // Load assets dynamically and pop up the LiteBox modal
-    const startLiteBox = async () => {
-      try {
-        toast({
-          title: '🔐 Securing Gateway...',
-          description: 'Loading secure payment checkout dialog.',
-        });
-
-        // 1. Load JQuery if not present
-        if (!(window as any).$) {
-          await loadScript('https://code.jquery.com/jquery-3.6.0.min.js');
-        }
-
-        const $ = (window as any).$;
-
-        await loadScript('https://cdnjs.cloudflare.com/ajax/libs/bootstrap/5.3.0/js/bootstrap.bundle.min.js');
-        await loadScript(`${portalUrl}/scripts/jquery/js/jquery.litebox.js`);
-
-        (window as any).liteboxComplete = async (data: Record<string, unknown>) => {
-          console.log('[iVeri LiteBox] Payment Complete Callback:', data);
-          setPlacing(false);
-
-          const confirmedOrderNumber = String(
-            data.Ecom_ConsumerOrderID || formFields.Ecom_ConsumerOrderID || orderNumber,
-          );
-          const receivedNonce = data[IVERI_NONCE_FIELD] != null ? String(data[IVERI_NONCE_FIELD]) : null;
-
-          if (!verifyIveriNonce(receivedNonce, confirmedOrderNumber)) {
-            toast({
-              title: 'Security check failed',
-              description: 'Payment response could not be verified. Please contact support with your order reference.',
-              variant: 'destructive',
-            });
-            return;
-          }
-
-          const status = data.Lite_Payment_Card_Status ?? data.Lite_Status;
-          const transactionIndex = data.Lite_TransactionIndex
-            ? String(data.Lite_TransactionIndex)
-            : null;
-
-          if (isIveriPaymentSuccess(status)) {
-            await confirmPaymentOnServer(
-              confirmedOrderNumber,
-              checkoutNonce,
-              String(status),
-              transactionIndex,
-            );
-
-            try {
-              await supabase.functions.invoke('iveri-gateway', {
-                body: { action: 'verify-transaction', merchantTrace },
-              });
-            } catch {
-              /* AuthoriseInfo is advisory */
-            }
-
-            toast({
-              title: 'Payment successful',
-              description: 'Your order has been authorized.',
-            });
-            clearCart();
-            navigate(`/order-confirmation?status=success&order=${encodeURIComponent(confirmedOrderNumber)}&nonce=${encodeURIComponent(checkoutNonce)}`, {
-              state: pendingOrder,
-            });
-          } else {
-            await confirmPaymentOnServer(
-              confirmedOrderNumber,
-              checkoutNonce,
-              String(status ?? 'failed'),
-              transactionIndex,
-            );
-            toast({
-              title: 'Payment Declined',
-              description: String(data.Lite_Result_Description || 'The transaction was refused or cancelled.'),
-              variant: 'destructive',
-            });
-          }
-        };
-
-        // 5. Watch for modal closing event in bootstrap to clean up our places loading state if modal is manually closed
-        $(document).on('hidden.bs.modal', '#liteboxModal, .modal', function () {
-          console.log('[iVeri LiteBox] Modal closed by user');
-          setPlacing(false);
-        });
-
-        // 6. Initialize iVeri LiteBox with explicit form ID
-        if (typeof (window as any).liteboxInitialise === 'function') {
-          (window as any).liteboxInitialise(portalUrl, 'tenga-iveri-form');
-        }
-
-        // 7. Fire click event only after the iframe is fully loaded to its cross-origin domain
-        // (to prevent 'postMessage' target origin mismatch when the iframe is still on about:blank)
-        let attempts = 0;
-        const maxAttempts = 100; // 100 * 50ms = 5 seconds max wait
-        
-        const triggerClickWhenReady = () => {
-          const iframe = document.getElementById('iveri-litebox-iframe') as HTMLIFrameElement | null;
-          const btn = document.getElementById('iveri-litebox-button');
-          
-          if (attempts >= maxAttempts) {
-            console.warn('[iVeri LiteBox] Timeout waiting for iframe to load. Falling back to direct redirect...');
-            payForm.submit();
-            return;
-          }
-
-          if (!iframe || !btn) {
-            attempts++;
-            setTimeout(triggerClickWhenReady, 50);
-            return;
-          }
-
-          let isCross = false;
-          try {
-            // Attempt to access contentWindow's location.
-            // If it succeeds, it's same-origin (about:blank).
-            // If it throws a SecurityError/CORS error, it has navigated cross-origin to iVeri.
-            const _unused = iframe.contentWindow?.location.href;
-          } catch (e) {
-            isCross = true;
-          }
-
-          if (isCross) {
-            console.log('[iVeri LiteBox] Iframe loaded cross-origin. Triggering click...');
-            btn.click();
-          } else {
-            attempts++;
-            setTimeout(triggerClickWhenReady, 50);
-          }
-        };
-
-        triggerClickWhenReady();
-
-      } catch (err) {
-        console.error('[iVeri LiteBox] Loading failed, running direct redirect fallback:', err);
-        payForm.submit();
-      }
-    };
-
-    startLiteBox();
+    payForm.submit();
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -342,7 +149,7 @@ const CheckoutPage = () => {
       total: orderTotal,
     };
 
-    // --- CASE 1: ONLINE CARD / MOBILE PAYMENT VIA IVERI (NEDBANK LITEBOX MODAL) ---
+    // --- CASE 1: ONLINE CARD / MOBILE PAYMENT VIA IVERI (NEDBANK REDIRECT) ---
     if (paymentMethod === 'iveri') {
       if (!user) {
         toast({
@@ -355,7 +162,7 @@ const CheckoutPage = () => {
 
       setPlacing(true);
       try {
-        console.log('[iVeri] Initializing LiteBox payment for order:', orderNumber);
+        console.log('[iVeri] Initializing redirect payment for order:', orderNumber);
 
         const { data, error } = await supabase.functions.invoke('iveri-gateway', {
           body: {
@@ -379,7 +186,6 @@ const CheckoutPage = () => {
 
         const {
           gatewayUrl,
-          portalUrl,
           formFields,
           orderNumber: gatewayOrderNumber,
           checkoutNonce,
@@ -388,7 +194,6 @@ const CheckoutPage = () => {
 
         // Clean UTF-8 BOM (\uFEFF) and whitespace from gateway URLs
         const cleanGatewayUrl = (gatewayUrl || '').replace(/^\uFEFF/, '').trim();
-        const cleanPortalUrl = (portalUrl || '').replace(/^\uFEFF/, '').trim();
 
         const pendingOrder: IveriPendingOrder = {
           ...confirmationState,
@@ -397,14 +202,11 @@ const CheckoutPage = () => {
           merchantTrace,
         };
 
-        triggerLiteBoxPayment(
+        triggerRedirectPayment(
           cleanGatewayUrl,
-          cleanPortalUrl,
           formFields,
-          result.data,
           gatewayOrderNumber,
           checkoutNonce,
-          merchantTrace,
           pendingOrder,
         );
         return;
@@ -536,88 +338,6 @@ const CheckoutPage = () => {
 
   return (
     <div className="min-h-screen flex flex-col relative">
-      {/* Target container for iVeri LiteBox modal rendering */}
-      <div id="iveri-litebox"></div>
-
-      {/* Premium custom glassmorphic styling for the iVeri LiteBox payment popup */}
-      <style>{`
-        .modal-backdrop {
-          position: fixed;
-          top: 0;
-          left: 0;
-          width: 100vw;
-          height: 100vh;
-          background-color: rgba(15, 23, 42, 0.6) !important;
-          backdrop-filter: blur(8px) !important;
-          z-index: 1040;
-        }
-        .modal {
-          position: fixed;
-          top: 0;
-          left: 0;
-          z-index: 1050;
-          display: none;
-          width: 100%;
-          height: 100%;
-          overflow: hidden;
-          outline: 0;
-        }
-        .modal.show {
-          display: flex !important;
-          align-items: center !important;
-          justify-content: center !important;
-        }
-        .modal-dialog {
-          position: relative;
-          width: 100% !important;
-          max-width: 550px !important;
-          margin: 1.75rem auto !important;
-          pointer-events: none;
-          z-index: 1060;
-        }
-        .modal-content {
-          position: relative;
-          display: flex;
-          flex-direction: column;
-          width: 100%;
-          pointer-events: auto;
-          background-color: hsl(var(--background)) !important;
-          background-clip: padding-box;
-          border: 1px solid hsl(var(--border)) !important;
-          border-radius: 16px !important;
-          outline: 0;
-          box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25) !important;
-          overflow: hidden !important;
-        }
-        .modal-header {
-          display: flex;
-          align-items: center;
-          justify-content: space-between;
-          padding: 1rem 1.5rem !important;
-          border-bottom: 1px solid hsl(var(--border)) !important;
-        }
-        .modal-header .btn-close, .modal-header .close {
-          background: none;
-          border: none;
-          font-size: 1.5rem;
-          color: hsl(var(--muted-foreground));
-          cursor: pointer;
-        }
-        .modal-body {
-          position: relative;
-          flex: 1 1 auto;
-          padding: 0 !important;
-          height: 600px !important;
-          background: hsl(var(--background)) !important;
-        }
-        .modal-body iframe {
-          width: 100% !important;
-          height: 100% !important;
-          border: none !important;
-          border-radius: 0 0 16px 16px !important;
-        }
-      `}</style>
-
       {/* Immersive secure gateway redirect overlay */}
       {placing && paymentMethod === 'iveri' && (
         <div className="fixed inset-0 bg-background/95 backdrop-blur-md z-50 flex flex-col items-center justify-center text-center p-6 animate-in fade-in duration-300">
@@ -625,9 +345,9 @@ const CheckoutPage = () => {
             <div className="h-16 w-16 rounded-full border-4 border-primary/20 border-t-primary animate-spin" />
             <Shield className="h-8 w-8 text-primary absolute inset-0 m-auto animate-pulse" />
           </div>
-          <h2 className="text-2xl font-bold mb-2">Connecting to Secure Gateway</h2>
+          <h2 className="text-2xl font-bold mb-2">Redirecting to Payment Gateway</h2>
           <p className="text-muted-foreground max-w-sm text-sm mb-1">
-            Loading secure payment interface inside a pop-up dialog. Please do not refresh this page.
+            Redirecting you to the secure iVeri payment portal. Please do not close or refresh this page.
           </p>
           <p className="text-xs text-primary/80 font-medium animate-pulse">Your session is encrypted.</p>
         </div>

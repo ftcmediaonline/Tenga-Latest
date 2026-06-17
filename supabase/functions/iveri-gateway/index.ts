@@ -14,7 +14,7 @@ function getCleanEnv(key: string): string {
 }
 
 const NONCE_FIELD = "Lite_Merchant_Nonce";
-const DEFAULT_GATEWAY_URL = "https://portal.nedsecure.co.za/Lite/Authorise.aspx";
+const DEFAULT_GATEWAY_URL = "https://portal.host.iveri.com/Lite/Authorise.aspx";
 
 interface CartItem {
   id: string;
@@ -445,6 +445,7 @@ Deno.serve(async (req) => {
       Lite_Transaction_Token: liteTransactionToken,
       Ecom_ConsumerOrderID: orderNumber,
       MerchantReference: orderNumber,
+      Lite_ConsumerOrderID_PreFix: "TNG",
       Lite_Merchant_Trace: merchantTrace,
       [NONCE_FIELD]: checkoutNonce,
       Lite_Website_Successful_Url: successUrl,

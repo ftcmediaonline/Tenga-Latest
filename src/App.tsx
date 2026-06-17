@@ -18,6 +18,7 @@ import CategoriesPage from "./pages/CategoriesPage";
 import TrendingPage from "./pages/TrendingPage";
 import CheckoutPage from "./pages/CheckoutPage";
 import OrderConfirmationPage from "./pages/OrderConfirmationPage";
+import OrderFailedPage from "./pages/OrderFailedPage";
 import OpenShopPage from "./pages/OpenShopPage";
 import AuthPage from "./pages/AuthPage";
 import HelpCenterPage from "./pages/HelpCenterPage";
@@ -90,6 +91,7 @@ const App = () => (
               <Route path="/trending" element={<TrendingPage />} />
               <Route path="/checkout" element={<CheckoutPage />} />
               <Route path="/order-confirmation" element={<OrderConfirmationPage />} />
+              <Route path="/order-failed" element={<OrderFailedPage />} />
               <Route path="/open-shop" element={<OpenShopPage />} />
               <Route path="/auth" element={<AuthPage />} />
               <Route path="/help-center" element={<HelpCenterPage />} />
