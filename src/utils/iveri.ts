@@ -82,7 +82,7 @@ export function clearIveriCheckoutSession(orderNumber: string) {
 
 export type IveriPendingOrder = {
   orderNumber: string;
-  items: { name: string; qty: number; price: number; image: string }[];
+  items: { name: string; qty: number; price: number; image: string; selectedVariants?: Record<string, string> }[];
   shippingAddress: {
     firstName: string;
     lastName: string;

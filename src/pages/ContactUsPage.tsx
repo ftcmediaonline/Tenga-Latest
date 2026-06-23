@@ -3,18 +3,38 @@ import Footer from "@/components/layout/Footer";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
-import { Mail, MapPin, Phone } from "lucide-react";
+import { Mail, MapPin, Phone, Loader2 } from "lucide-react";
 import { useState } from "react";
 import { useToast } from "@/hooks/use-toast";
+import { sendTransactionalEmail } from "@/utils/emailService";
 
 const ContactUsPage = () => {
   const { toast } = useToast();
   const [form, setForm] = useState({ name: "", email: "", message: "" });
+  const [loading, setLoading] = useState(false);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    toast({ title: "Message sent!", description: "We'll get back to you as soon as possible." });
-    setForm({ name: "", email: "", message: "" });
+    setLoading(true);
+    try {
+      const { success, error } = await sendTransactionalEmail({
+        action: 'contact-us',
+        name: form.name,
+        email: form.email,
+        message: form.message,
+      });
+
+      if (success) {
+        toast({ title: "Message sent!", description: "We'll get back to you as soon as possible." });
+        setForm({ name: "", email: "", message: "" });
+      } else {
+        toast({ title: "Failed to send message", description: error || "Please try again later.", variant: "destructive" });
+      }
+    } catch (err) {
+      toast({ title: "An error occurred", description: "Could not send message.", variant: "destructive" });
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -29,7 +49,10 @@ const ContactUsPage = () => {
             <Input placeholder="Your name" required value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
             <Input type="email" placeholder="Your email" required value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} />
             <Textarea placeholder="Your message" rows={6} required value={form.message} onChange={(e) => setForm({ ...form, message: e.target.value })} />
-            <Button type="submit" className="w-full">Send Message</Button>
+            <Button type="submit" className="w-full" disabled={loading}>
+              {loading && <Loader2 className="h-4 w-4 animate-spin mr-2" />}
+              Send Message
+            </Button>
           </form>
 
           <div className="space-y-6">

@@ -37,6 +37,7 @@ function mapDbShopToShop(row: {
   product_count: number | null;
   contact_email?: string | null;
   contact_phone?: string | null;
+  pricing_tier?: string | null;
   categories?: { name: string } | null;
 }): Shop {
   return {
@@ -55,6 +56,7 @@ function mapDbShopToShop(row: {
     location: row.location ?? undefined,
     contactEmail: row.contact_email ?? undefined,
     contactPhone: row.contact_phone ?? undefined,
+    pricingTier: row.pricing_tier ?? 'starter',
   };
 }
 
@@ -315,11 +317,21 @@ const ShopPage = () => {
 
       {/* Banner */}
       <div className="relative h-48 md:h-64 overflow-hidden">
-        <img
-          src={shop.banner}
-          alt={shop.name}
-          className="h-full w-full object-cover"
-        />
+        {shop.pricingTier === 'starter' ? (
+          <div className="w-full h-full bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 flex items-center justify-center relative">
+            <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-indigo-900/30 via-transparent to-transparent" />
+            <div className="absolute inset-0 opacity-10 bg-[linear-gradient(to_right,#808080_1px,transparent_1px),linear-gradient(to_bottom,#808080_1px,transparent_1px)] bg-[size:24px_24px]" />
+            <span className="text-white/25 font-bold tracking-widest text-lg sm:text-xl uppercase select-none">
+              Tenga Mall Store
+            </span>
+          </div>
+        ) : (
+          <img
+            src={shop.banner}
+            alt={shop.name}
+            className="h-full w-full object-cover"
+          />
+        )}
         <div className="absolute inset-0 bg-gradient-to-t from-background via-background/70 to-background/30" />
       </div>
 

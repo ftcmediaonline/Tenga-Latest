@@ -9,7 +9,7 @@ import { useToast } from '@/hooks/use-toast';
 import { supabase } from '@/integrations/supabase/client';
 import { sendTransactionalEmail } from '@/utils/emailService';
 import type { Tables } from '@/integrations/supabase/types';
-import { Store, Check, X, ShieldAlert, Loader2, Users, Shield, Trash2, ExternalLink, TrendingUp, Truck, Package, Plus, MessageCircle, Mail, Send, Search, DollarSign, ClipboardList } from 'lucide-react';
+import { Store, Check, X, ShieldAlert, Loader2, Users, Shield, Trash2, ExternalLink, TrendingUp, Truck, Package, Plus, MessageCircle, Mail, Send, Search, DollarSign, ClipboardList, Inbox } from 'lucide-react';
 import {
   Select,
   SelectContent,
@@ -71,6 +71,7 @@ const AdminDashboardPage = () => {
   const [orderTrackingDraft, setOrderTrackingDraft] = useState<Record<string, { status: string; tracking_carrier: string; tracking_number: string }>>({});
   const [orderFilterStatus, setOrderFilterStatus] = useState<string>('');
   const [orderFilterShopId, setOrderFilterShopId] = useState<string>('');
+  const [orderFilterType, setOrderFilterType] = useState<string>('');
   const [expandedOrderId, setExpandedOrderId] = useState<string | null>(null);
   const [manageProductsShopId, setManageProductsShopId] = useState<string | null>(null);
   const [productsForShop, setProductsForShop] = useState<Product[]>([]);
@@ -99,6 +100,10 @@ const AdminDashboardPage = () => {
   const [adminActiveTab, setAdminActiveTab] = useState('shops');
   const [userFilterRole, setUserFilterRole] = useState<string>('all');
   const [userFilterDate, setUserFilterDate] = useState<string>('all');
+  const [inquiries, setInquiries] = useState<{ id: string; name: string; email: string; message: string; status: string; created_at: string }[]>([]);
+  const [inquiriesLoading, setInquiriesLoading] = useState(true);
+  const [deletingInquiryId, setDeletingInquiryId] = useState<string | null>(null);
+  const [updatingInquiryId, setUpdatingInquiryId] = useState<string | null>(null);
 
   useEffect(() => {
     if (!authLoading && !user) {
@@ -193,6 +198,20 @@ const AdminDashboardPage = () => {
 
   useEffect(() => {
     if (profileRole !== 'admin') return;
+    (async () => {
+      const { data, error } = await supabase
+        .from('contact_inquiries')
+        .select('*')
+        .order('created_at', { ascending: false });
+      if (!error && data) {
+        setInquiries(data as any[]);
+      }
+      setInquiriesLoading(false);
+    })();
+  }, [profileRole]);
+
+  useEffect(() => {
+    if (profileRole !== 'admin') return;
     setAdminConversationsLoading(true);
     supabase
       .from('shop_conversations')
@@ -278,6 +297,20 @@ const AdminDashboardPage = () => {
       setAddProductError('Please add a product image.');
       return;
     }
+
+    // Check shop pricing tier product limits
+    const targetShop = allShops.find(s => s.id === manageProductsShopId);
+    const tier = (targetShop as any)?.pricing_tier ?? 'starter';
+    const currentCount = productsForShop.length;
+    if (tier === 'starter' && currentCount >= 10) {
+      setAddProductError('This shop has reached the limit of 10 products for the Starter plan.');
+      return;
+    }
+    if (tier === 'growth' && currentCount >= 100) {
+      setAddProductError('This shop has reached the limit of 100 products for the Growth plan.');
+      return;
+    }
+
     setAddingProduct(true);
     try {
       const slug = slugFromName(name) || 'product-' + Date.now();
@@ -368,6 +401,11 @@ const AdminDashboardPage = () => {
   const filteredOrders = allOrders.filter((order) => {
     if (orderFilterStatus && (order.status ?? 'pending') !== orderFilterStatus) return false;
     if (orderFilterShopId && order.shop_id !== orderFilterShopId) return false;
+    if (orderFilterType) {
+      const isUpgrade = order.shipping_method?.startsWith('plan_upgrade:');
+      if (orderFilterType === 'upgrade' && !isUpgrade) return false;
+      if (orderFilterType === 'purchase' && isUpgrade) return false;
+    }
     const orderSearch = adminSearchQuery.trim().toLowerCase();
     if (orderSearch) {
       const orderNumber = (order.order_number ?? order.id).toString().toLowerCase();
@@ -633,6 +671,37 @@ const AdminDashboardPage = () => {
     }
   };
 
+  const handleDeleteInquiry = async (id: string) => {
+    if (!confirm('Are you sure you want to delete this inquiry? This cannot be undone.')) return;
+    setDeletingInquiryId(id);
+    const { error } = await supabase.from('contact_inquiries').delete().eq('id', id);
+    setDeletingInquiryId(null);
+    if (!error) {
+      setInquiries((prev) => prev.filter((item) => item.id !== id));
+      toast({ title: 'Inquiry deleted' });
+    } else {
+      toast({ title: 'Failed to delete inquiry', description: error.message, variant: 'destructive' });
+    }
+  };
+
+  const handleToggleInquiryStatus = async (id: string, currentStatus: string) => {
+    const nextStatus = currentStatus === 'unread' ? 'read' : 'unread';
+    setUpdatingInquiryId(id);
+    const { error } = await supabase
+      .from('contact_inquiries')
+      .update({ status: nextStatus })
+      .eq('id', id);
+    setUpdatingInquiryId(null);
+    if (!error) {
+      setInquiries((prev) =>
+        prev.map((item) => (item.id === id ? { ...item, status: nextStatus } : item))
+      );
+      toast({ title: `Inquiry marked as ${nextStatus}` });
+    } else {
+      toast({ title: 'Failed to update status', description: error.message, variant: 'destructive' });
+    }
+  };
+
   const handleTierChange = async (shopId: string, tier: string) => {
     setUpdatingTierShopId(shopId);
     const { error } = await supabase.from('shops').update({ pricing_tier: tier }).eq('id', shopId);
@@ -733,6 +802,17 @@ const AdminDashboardPage = () => {
     });
   }, [adminConversations, adminSearchQuery, adminCustomerNames]);
 
+  const filteredInquiries = useMemo(() => {
+    const q = adminSearchQuery.trim().toLowerCase();
+    if (!q) return inquiries;
+    return inquiries.filter((item) => {
+      const name = (item.name ?? '').toLowerCase();
+      const email = (item.email ?? '').toLowerCase();
+      const msg = (item.message ?? '').toLowerCase();
+      return name.includes(q) || email.includes(q) || msg.includes(q);
+    });
+  }, [inquiries, adminSearchQuery]);
+
   if (authLoading || profileLoading) {
     return (
       <div className="min-h-screen flex flex-col bg-background">
@@ -780,16 +860,16 @@ const AdminDashboardPage = () => {
               <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground pointer-events-none" />
               <Input
                 type="search"
-                placeholder={adminActiveTab === 'users' ? 'Search users by name or username...' : adminActiveTab === 'shops' ? 'Search shops...' : adminActiveTab === 'products' ? 'Search products...' : adminActiveTab === 'orders' ? 'Search orders...' : adminActiveTab === 'messages' ? 'Search conversations...' : 'Search...'}
+                placeholder={adminActiveTab === 'users' ? 'Search users by name or username...' : adminActiveTab === 'shops' ? 'Search shops...' : adminActiveTab === 'products' ? 'Search products...' : adminActiveTab === 'orders' ? 'Search orders...' : adminActiveTab === 'messages' ? 'Search conversations...' : adminActiveTab === 'inquiries' ? 'Search inquiries...' : 'Search...'}
                 value={adminSearchQuery}
                 onChange={(e) => setAdminSearchQuery(e.target.value)}
                 className="pl-9"
               />
             </div>
           </div>
-
+ 
           {/* Performance stats at a glance */}
-          <div className="mt-4 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+          <div className="mt-4 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
             <div className="rounded-lg border border-border bg-card px-4 py-3 flex items-center gap-3">
               <div className="rounded-md bg-amber-500/10 p-2">
                 <ClipboardList className="h-5 w-5 text-amber-600 dark:text-amber-400" />
@@ -827,6 +907,17 @@ const AdminDashboardPage = () => {
               </div>
             </div>
             <div className="rounded-lg border border-border bg-card px-4 py-3 flex items-center gap-3">
+              <div className="rounded-md bg-red-500/10 p-2">
+                <Inbox className="h-5 w-5 text-red-600 dark:text-red-400" />
+              </div>
+              <div className="min-w-0">
+                <p className="text-xs font-medium text-muted-foreground">Inquiries</p>
+                <p className="text-lg font-semibold tabular-nums">
+                  {inquiriesLoading ? '—' : inquiries.filter((i) => i.status === 'unread').length}
+                </p>
+              </div>
+            </div>
+            <div className="rounded-lg border border-border bg-card px-4 py-3 flex items-center gap-3">
               <div className="rounded-md bg-green-500/10 p-2">
                 <DollarSign className="h-5 w-5 text-green-600 dark:text-green-400" />
               </div>
@@ -839,9 +930,9 @@ const AdminDashboardPage = () => {
             </div>
           </div>
         </div>
-
+ 
         <Tabs value={adminActiveTab} onValueChange={setAdminActiveTab} className="space-y-6">
-          <TabsList className="grid w-full grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 h-auto gap-1 p-1">
+          <TabsList className="grid w-full grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 h-auto gap-1 p-1">
             <TabsTrigger value="shops" className="flex items-center gap-1.5 py-2">
               <Store className="h-4 w-4 shrink-0" />
               Shops
@@ -857,6 +948,10 @@ const AdminDashboardPage = () => {
             <TabsTrigger value="messages" className="flex items-center gap-1.5 py-2">
               <MessageCircle className="h-4 w-4 shrink-0" />
               Messages
+            </TabsTrigger>
+            <TabsTrigger value="inquiries" className="flex items-center gap-1.5 py-2">
+              <Inbox className="h-4 w-4 shrink-0" />
+              Inquiries
             </TabsTrigger>
             <TabsTrigger value="promotions" className="flex items-center gap-1.5 py-2">
               <Mail className="h-4 w-4 shrink-0" />
@@ -1284,6 +1379,19 @@ const AdminDashboardPage = () => {
                   </SelectContent>
                 </Select>
               </div>
+              <div className="flex items-center gap-2">
+                <Label className="text-muted-foreground whitespace-nowrap text-xs">Type</Label>
+                <Select value={orderFilterType || '__all__'} onValueChange={(v) => setOrderFilterType(v === '__all__' ? '' : v)}>
+                  <SelectTrigger className="w-[150px] h-9">
+                    <SelectValue placeholder="All types" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="__all__">All types</SelectItem>
+                    <SelectItem value="purchase">Product purchases</SelectItem>
+                    <SelectItem value="upgrade">Plan upgrades</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
             </div>
 
             {ordersLoading ? (
@@ -1331,8 +1439,15 @@ const AdminDashboardPage = () => {
                                 <span className="text-muted-foreground">{isExpanded ? '−' : '+'}</span>
                               </Button>
                             </td>
-                            <td className="py-2 font-mono text-xs">
-                              {order.order_number ?? order.id.slice(0, 8)}
+                             <td className="py-2 font-mono text-xs">
+                              <div className="flex flex-col gap-1">
+                                <span>{order.order_number ?? order.id.slice(0, 8)}</span>
+                                {order.shipping_method?.startsWith('plan_upgrade:') && (
+                                  <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold bg-purple-100 text-purple-800 dark:bg-purple-900/30 dark:text-purple-400 w-fit capitalize">
+                                    Upgrade: {order.shipping_method.split(':')[1]}
+                                  </span>
+                                )}
+                              </div>
                             </td>
                             <td className="py-2 text-muted-foreground whitespace-nowrap">
                               {order.created_at ? new Date(order.created_at).toLocaleDateString() : '—'}
@@ -1341,45 +1456,63 @@ const AdminDashboardPage = () => {
                             <td className="py-2 max-w-[120px] truncate" title={customerName}>{customerName}</td>
                             <td className="py-2 text-right font-medium">${Number(order.total).toFixed(2)}</td>
                             <td className="py-2">
-                              <select
-                                value={draft.status}
-                                onChange={(e) => setOrderDraft(order.id, 'status', e.target.value)}
-                                className="h-8 rounded-md border border-input bg-background px-2 text-xs w-full max-w-[100px]"
-                              >
-                                <option value="pending">Pending</option>
-                                <option value="processing">Processing</option>
-                                <option value="shipped">Shipped</option>
-                                <option value="delivered">Delivered</option>
-                                <option value="cancelled">Cancelled</option>
-                              </select>
+                              {order.shipping_method?.startsWith('plan_upgrade:') ? (
+                                <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400">
+                                  Completed
+                                </span>
+                              ) : (
+                                <select
+                                  value={draft.status}
+                                  onChange={(e) => setOrderDraft(order.id, 'status', e.target.value)}
+                                  className="h-8 rounded-md border border-input bg-background px-2 text-xs w-full max-w-[100px]"
+                                >
+                                  <option value="pending">Pending</option>
+                                  <option value="processing">Processing</option>
+                                  <option value="shipped">Shipped</option>
+                                  <option value="delivered">Delivered</option>
+                                  <option value="cancelled">Cancelled</option>
+                                </select>
+                              )}
                             </td>
                             <td className="py-2">
-                              <div className="flex flex-col gap-1 max-w-[180px]">
-                                <input
-                                  type="text"
-                                  placeholder="Carrier"
-                                  value={draft.tracking_carrier}
-                                  onChange={(e) => setOrderDraft(order.id, 'tracking_carrier', e.target.value)}
-                                  className="h-8 rounded-md border border-input bg-background px-2 text-xs"
-                                />
-                                <input
-                                  type="text"
-                                  placeholder="Tracking number"
-                                  value={draft.tracking_number}
-                                  onChange={(e) => setOrderDraft(order.id, 'tracking_number', e.target.value)}
-                                  className="h-8 rounded-md border border-input bg-background px-2 text-xs"
-                                />
-                              </div>
+                              {order.shipping_method?.startsWith('plan_upgrade:') ? (
+                                <span className="text-xs text-muted-foreground italic">
+                                  Virtual Product
+                                </span>
+                              ) : (
+                                <div className="flex flex-col gap-1 max-w-[180px]">
+                                  <input
+                                    type="text"
+                                    placeholder="Carrier"
+                                    value={draft.tracking_carrier}
+                                    onChange={(e) => setOrderDraft(order.id, 'tracking_carrier', e.target.value)}
+                                    className="h-8 rounded-md border border-input bg-background px-2 text-xs"
+                                  />
+                                  <input
+                                    type="text"
+                                    placeholder="Tracking number"
+                                    value={draft.tracking_number}
+                                    onChange={(e) => setOrderDraft(order.id, 'tracking_number', e.target.value)}
+                                    className="h-8 rounded-md border border-input bg-background px-2 text-xs"
+                                  />
+                                </div>
+                              )}
                             </td>
                             <td className="py-2 text-right">
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                onClick={() => handleUpdateOrderTracking(order)}
-                                disabled={updatingOrderId === order.id}
-                              >
-                                {updatingOrderId === order.id ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Update'}
-                              </Button>
+                              {order.shipping_method?.startsWith('plan_upgrade:') ? (
+                                <span className="text-xs text-muted-foreground">
+                                  Auto-managed
+                                </span>
+                              ) : (
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() => handleUpdateOrderTracking(order)}
+                                  disabled={updatingOrderId === order.id}
+                                >
+                                  {updatingOrderId === order.id ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Update'}
+                                </Button>
+                              )}
                             </td>
                             </tr>
                           {isExpanded && (
@@ -1398,18 +1531,30 @@ const AdminDashboardPage = () => {
                                     {o.shipping_method && <p className="capitalize text-muted-foreground">Method: {o.shipping_method.replace(/-/g, ' ')}</p>}
                                   </div>
                                 </div>
-                                {order.order_items && order.order_items.length > 0 && (
+                                {order.shipping_method?.startsWith('plan_upgrade:') ? (
                                   <div className="mt-3 pt-3 border-t border-border">
-                                    <p className="font-medium text-muted-foreground mb-2">Items</p>
-                                    <ul className="space-y-1">
-                                      {order.order_items.map((oi) => (
-                                        <li key={oi.id} className="flex justify-between">
-                                          <span>{oi.products?.name ?? 'Product'} × {oi.quantity}</span>
-                                          <span>${Number(oi.price * oi.quantity).toFixed(2)}</span>
-                                        </li>
-                                      ))}
-                                    </ul>
+                                    <p className="font-medium text-muted-foreground mb-2">Upgrade details</p>
+                                    <div className="flex justify-between text-sm">
+                                      <span className="capitalize font-medium text-purple-600 dark:text-purple-400">
+                                        Tenga {order.shipping_method.split(':')[1]} Plan Subscription Upgrade
+                                      </span>
+                                      <span>${Number(order.total).toFixed(2)}</span>
+                                    </div>
                                   </div>
+                                ) : (
+                                  order.order_items && order.order_items.length > 0 && (
+                                    <div className="mt-3 pt-3 border-t border-border">
+                                      <p className="font-medium text-muted-foreground mb-2">Items</p>
+                                      <ul className="space-y-1">
+                                        {order.order_items.map((oi) => (
+                                          <li key={oi.id} className="flex justify-between">
+                                            <span>{oi.products?.name ?? 'Product'} × {oi.quantity}</span>
+                                            <span>${Number(oi.price * oi.quantity).toFixed(2)}</span>
+                                          </li>
+                                        ))}
+                                      </ul>
+                                    </div>
+                                  )
                                 )}
                               </td>
                             </tr>
@@ -1518,6 +1663,125 @@ const AdminDashboardPage = () => {
           </CardContent>
         </Card>
 
+          </TabsContent>
+
+          <TabsContent value="inquiries" className="space-y-6">
+            <Card className="mb-6">
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Inbox className="h-5 w-5" />
+                  Contact Inquiries ({filteredInquiries.length}{filteredInquiries.length !== inquiries.length ? ` of ${inquiries.length}` : ''})
+                </CardTitle>
+                <p className="text-sm text-muted-foreground">
+                  View and manage messages received from visitors via the Contact Us form.
+                </p>
+              </CardHeader>
+              <CardContent>
+                {inquiriesLoading ? (
+                  <div className="flex justify-center py-12">
+                    <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+                  </div>
+                ) : filteredInquiries.length === 0 ? (
+                  <p className="text-muted-foreground text-center py-12">
+                    {inquiries.length === 0 ? 'No inquiries received yet.' : 'No inquiries match the search.'}
+                  </p>
+                ) : (
+                  <div className="space-y-4">
+                    {filteredInquiries.map((inquiry) => (
+                      <div
+                        key={inquiry.id}
+                        className={cn(
+                          "flex flex-col gap-3 rounded-lg border p-4 transition-colors",
+                          inquiry.status === 'unread' 
+                            ? "border-l-4 border-l-primary bg-primary/5 border-border" 
+                            : "border-border bg-card"
+                        )}
+                      >
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                          <div>
+                            <h3 className="font-semibold text-base">{inquiry.name}</h3>
+                            <a
+                              href={`mailto:${inquiry.email}`}
+                              className="text-xs text-primary hover:underline flex items-center gap-1 mt-0.5"
+                            >
+                              {inquiry.email}
+                              <ExternalLink className="h-3 w-3" />
+                            </a>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs text-muted-foreground">
+                              {inquiry.created_at ? new Date(inquiry.created_at).toLocaleString() : '—'}
+                            </span>
+                            <span
+                              className={cn(
+                                "text-xs px-2 py-0.5 rounded-full font-medium capitalize",
+                                inquiry.status === 'unread'
+                                  ? "bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400"
+                                  : "bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-400"
+                              )}
+                            >
+                              {inquiry.status}
+                            </span>
+                          </div>
+                        </div>
+
+                        <p className="text-sm text-foreground whitespace-pre-wrap break-words leading-relaxed bg-background/50 p-3 rounded-md border border-border/50">
+                          {inquiry.message}
+                        </p>
+
+                        <div className="flex items-center justify-end gap-2 pt-2 border-t border-border/40">
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            asChild
+                          >
+                            <a href={`mailto:${inquiry.email}?subject=Re: Tenga Support Inquiry`}>
+                              <Send className="h-3.5 w-3.5 mr-1" />
+                              Reply
+                            </a>
+                          </Button>
+
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => handleToggleInquiryStatus(inquiry.id, inquiry.status)}
+                            disabled={updatingInquiryId === inquiry.id}
+                          >
+                            {updatingInquiryId === inquiry.id ? (
+                              <Loader2 className="h-3.5 w-3.5 animate-spin mr-1" />
+                            ) : inquiry.status === 'unread' ? (
+                              <>
+                                <Check className="h-3.5 w-3.5 mr-1 text-emerald-600 dark:text-emerald-400" />
+                                Mark Read
+                              </>
+                            ) : (
+                              <>
+                                <Inbox className="h-3.5 w-3.5 mr-1 text-blue-600 dark:text-blue-400" />
+                                Mark Unread
+                              </>
+                            )}
+                          </Button>
+
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            className="text-destructive hover:text-destructive hover:bg-destructive/10"
+                            onClick={() => handleDeleteInquiry(inquiry.id)}
+                            disabled={deletingInquiryId === inquiry.id}
+                          >
+                            {deletingInquiryId === inquiry.id ? (
+                              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                            ) : (
+                              <Trash2 className="h-3.5 w-3.5" />
+                            )}
+                          </Button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
           </TabsContent>
 
           <TabsContent value="promotions" className="space-y-6">

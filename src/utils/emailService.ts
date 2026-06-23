@@ -7,7 +7,8 @@ export type EmailAction =
   | 'shop-approved'
   | 'promotional-email'
   | 'admin-promo-store-owners'
-  | 'welcome-newsletter';
+  | 'welcome-newsletter'
+  | 'contact-us';
 
 export interface EmailParams {
   action: EmailAction;
@@ -23,6 +24,8 @@ export interface EmailParams {
   body?: string;
   audience?: string[];
   tier?: string;
+  name?: string;
+  message?: string;
 }
 
 export async function sendTransactionalEmail(params: EmailParams): Promise<{ success: boolean; error?: string }> {
@@ -69,7 +72,8 @@ function showDeveloperFallback(params: EmailParams, errorReason: string) {
     'shop-approved': 'Shop Approval Notification',
     'promotional-email': 'Seller Promotion Broadcast',
     'admin-promo-store-owners': 'Admin Store Owner Announcement',
-    'welcome-newsletter': 'Welcome Newsletter Coupon'
+    'welcome-newsletter': 'Welcome Newsletter Coupon',
+    'contact-us': 'Contact Message Sent'
   };
 
   const recipient = params.email || 'Shop Owner / Followers';

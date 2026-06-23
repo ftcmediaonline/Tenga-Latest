@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   Store, ImagePlus, Tags, FileCheck, ChevronLeft, ChevronRight,
@@ -37,6 +37,9 @@ function slugFromName(name: string): string {
 const OpenShopPage = () => {
   const { user } = useAuth();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const plan = (searchParams.get('plan') || 'starter').toLowerCase();
+  
   const [currentStep, setCurrentStep] = useState(0);
   const [submitted, setSubmitted] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -189,6 +192,7 @@ const OpenShopPage = () => {
         product_count: null,
         contact_email: email.trim() || null,
         contact_phone: phone.trim() || null,
+        pricing_tier: plan,
       });
 
       if (error) {

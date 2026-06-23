@@ -14,6 +14,7 @@ export interface Shop {
   location?: string;
   contactEmail?: string;
   contactPhone?: string;
+  pricingTier?: string;
 }
 
 export interface Product {

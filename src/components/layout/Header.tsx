@@ -122,15 +122,13 @@ const Header = () => {
               {link.name}
             </Link>
           ))}
-          {hasShop && (
-            <Link
-              to="/seller-dashboard"
-              className="px-4 py-2 text-sm font-medium text-muted-foreground transition-colors hover:text-foreground flex items-center gap-1.5"
-            >
-              <Store className="h-4 w-4" />
-              Seller
-            </Link>
-          )}
+          <Link
+            to={hasShop ? "/seller-dashboard" : "/pricing"}
+            className="px-4 py-2 text-sm font-medium text-muted-foreground transition-colors hover:text-foreground flex items-center gap-1.5"
+          >
+            <Store className="h-4 w-4" />
+            Seller
+          </Link>
           {isAdmin && (
             <Link
               to="/admin"
@@ -401,16 +399,14 @@ const Header = () => {
                     <UserPlus className="h-4 w-4" />
                     Following
                   </Link>
-                  {hasShop && (
-                    <Link
-                      to="/seller-dashboard"
-                      className="px-4 py-3.5 min-h-[48px] flex items-center text-base font-medium text-foreground rounded-lg hover:bg-secondary active:bg-secondary transition-colors gap-2"
-                      onClick={() => setIsMobileMenuOpen(false)}
-                    >
-                      <Store className="h-4 w-4" />
-                      Seller dashboard
-                    </Link>
-                  )}
+                  <Link
+                    to={hasShop ? "/seller-dashboard" : "/pricing"}
+                    className="px-4 py-3.5 min-h-[48px] flex items-center text-base font-medium text-foreground rounded-lg hover:bg-secondary active:bg-secondary transition-colors gap-2"
+                    onClick={() => setIsMobileMenuOpen(false)}
+                  >
+                    <Store className="h-4 w-4" />
+                    {hasShop ? "Seller dashboard" : "Sell on Tenga"}
+                  </Link>
                 </>
               )}
               {isAdmin && (

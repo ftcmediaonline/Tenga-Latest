@@ -141,7 +141,13 @@ const CheckoutPage = () => {
     const orderNumber = generateIveriOrderNumber();
     const confirmationState: IveriPendingOrder = {
       orderNumber,
-      items: items.map(i => ({ name: i.product.name, qty: i.quantity, price: i.product.price, image: i.product.images[0] })),
+      items: items.map(i => ({
+        name: i.product.name,
+        qty: i.quantity,
+        price: i.product.price,
+        image: i.product.images[0],
+        selectedVariants: i.selectedVariants,
+      })),
       shippingAddress: result.data,
       shippingMethod,
       shippingCost,
@@ -511,6 +517,11 @@ const CheckoutPage = () => {
                       <div className="flex-1 min-w-0">
                         <p className="text-sm font-medium truncate">{item.product.name}</p>
                         <p className="text-xs text-muted-foreground">{item.shop.name}</p>
+                        {item.selectedVariants && Object.keys(item.selectedVariants).length > 0 && (
+                          <p className="text-xs text-muted-foreground mt-0.5 font-medium">
+                            {Object.values(item.selectedVariants).join(' / ')}
+                          </p>
+                        )}
                         <div className="flex items-center justify-between mt-1">
                           <div className="flex items-center gap-1.5">
                             <button type="button" onClick={() => updateQuantity(item.id, item.quantity - 1)} className="h-6 w-6 flex items-center justify-center rounded border border-border hover:bg-secondary">

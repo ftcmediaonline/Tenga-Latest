@@ -21,6 +21,7 @@ interface CartItem {
   product: { id: string; name: string; price: number; images: string[] };
   shop: { id: string; name: string };
   quantity: number;
+  selectedVariants?: Record<string, string>;
 }
 
 interface AddressForm {
@@ -165,7 +166,7 @@ async function sendOrderConfirmationEmail(
     price: Number(it.price),
   }));
 
-  await supabaseAdmin.functions.invoke("send-email", {
+  const { data, error } = await supabaseAdmin.functions.invoke("send-email", {
     headers: { Authorization: `Bearer ${supabaseServiceKey}` },
     body: {
       action: "order-confirmation",
@@ -177,6 +178,42 @@ async function sendOrderConfirmationEmail(
       items: formattedItems,
     },
   });
+
+  if (error) {
+    throw new Error(`Edge Function invocation error: ${error.message || JSON.stringify(error)}`);
+  }
+  if (data && data.error) {
+    throw new Error(`Email sending service error: ${data.error} ${data.details ? JSON.stringify(data.details) : ""}`);
+  }
+  console.log(`[iVeri Email] Email sent successfully for order ${orderNumber}. Resend ID: ${data?.id}`);
+}
+
+async function sendPlanUpgradeConfirmationEmail(
+  supabaseAdmin: ReturnType<typeof createClient>,
+  supabaseServiceKey: string,
+  order: { id: string; total: number; customer_email: string; customer_name: string; shipping_method: string | null },
+  orderNumber: string,
+) {
+  const tier = order.shipping_method ? order.shipping_method.split(":")[1] : "growth";
+  const { data, error } = await supabaseAdmin.functions.invoke("send-email", {
+    headers: { Authorization: `Bearer ${supabaseServiceKey}` },
+    body: {
+      action: "plan-upgrade-confirmation",
+      email: order.customer_email,
+      customerName: order.customer_name,
+      orderNumber,
+      tier,
+      total: Number(order.total),
+    },
+  });
+
+  if (error) {
+    throw new Error(`Edge Function invocation error: ${error.message || JSON.stringify(error)}`);
+  }
+  if (data && data.error) {
+    throw new Error(`Email sending service error: ${data.error} ${data.details ? JSON.stringify(data.details) : ""}`);
+  }
+  console.log(`[iVeri Plan Upgrade Email] Email sent successfully for order ${orderNumber}. Resend ID: ${data?.id}`);
 }
 
 Deno.serve(async (req) => {
@@ -215,17 +252,22 @@ Deno.serve(async (req) => {
 
       const { data: order, error: orderLookupError } = await supabaseAdmin
         .from("orders")
-        .select("id, total, customer_email, customer_name, shipping_method, payment_status")
+        .select("id, total, customer_email, customer_name, shipping_method, payment_status, shop_id")
         .eq("order_number", orderNumber)
         .maybeSingle();
 
       if (orderLookupError || !order) return json({ error: "Order not found" }, 404);
 
+      const isUpgrade = order.shipping_method && order.shipping_method.startsWith("plan_upgrade:");
+      const targetStatus = paymentStatus === "paid"
+        ? (isUpgrade ? "completed" : "pending")
+        : "cancelled";
+
       const { error: updateError } = await supabaseAdmin
         .from("orders")
         .update({
           payment_status: paymentStatus,
-          status: paymentStatus === "paid" ? "pending" : "cancelled",
+          status: targetStatus,
           iveri_transaction_id: transactionId,
           iveri_transaction_token: responseToken,
         })
@@ -234,10 +276,28 @@ Deno.serve(async (req) => {
       if (updateError) return json({ error: "Database update failed" }, 500);
 
       if (paymentStatus === "paid" && order.payment_status !== "paid") {
-        try {
-          await sendOrderConfirmationEmail(supabaseAdmin, supabaseServiceKey, order, orderNumber);
-        } catch (emailErr) {
-          console.error("[iVeri Webhook] Email failed:", emailErr);
+        if (isUpgrade) {
+          const tier = order.shipping_method.split(":")[1];
+          const { error: shopUpdateErr } = await supabaseAdmin
+            .from("shops")
+            .update({ pricing_tier: tier })
+            .eq("id", order.shop_id);
+          if (shopUpdateErr) {
+            console.error(`[iVeri Webhook Upgrade] Failed to update shop ${order.shop_id} pricing_tier to ${tier}:`, shopUpdateErr.message);
+          } else {
+            console.log(`[iVeri Webhook Upgrade] Upgraded shop ${order.shop_id} to ${tier}`);
+          }
+          try {
+            await sendPlanUpgradeConfirmationEmail(supabaseAdmin, supabaseServiceKey, order, orderNumber);
+          } catch (emailErr) {
+            console.error("[iVeri Webhook Upgrade] Email failed:", emailErr);
+          }
+        } else {
+          try {
+            await sendOrderConfirmationEmail(supabaseAdmin, supabaseServiceKey, order, orderNumber);
+          } catch (emailErr) {
+            console.error("[iVeri Webhook] Email failed:", emailErr);
+          }
         }
       }
 
@@ -276,7 +336,7 @@ Deno.serve(async (req) => {
 
       const { data: orders, error: findErr } = await supabaseAdmin
         .from("orders")
-        .select("id, total, customer_email, customer_name, shipping_method, payment_status, checkout_nonce, user_id")
+        .select("id, total, customer_email, customer_name, shipping_method, payment_status, checkout_nonce, user_id, shop_id")
         .eq("order_number", orderNumber)
         .eq("user_id", user.id);
 
@@ -287,17 +347,32 @@ Deno.serve(async (req) => {
         return json({ error: "Invalid checkout nonce" }, 403);
       }
 
+      // If the order has already been marked as paid (e.g. by the webhook), do not allow modifying its status back to failed/cancelled!
+      if (order.payment_status === "paid") {
+        return json({ success: true, paymentStatus: "paid" });
+      }
+
       // Security validation: Query the iVeri gateway directly to verify payment success
       // to prevent client-side payment status spoofing.
       let paymentStatus = mapPaymentStatus(rawStatus);
+      let queryFailed = false;
+
       if (paymentStatus === "paid") {
         const info = await queryAuthoriseInfo(gatewayUrl, applicationId, orderNumber);
         if (info.ok && info.rawStatus) {
           paymentStatus = mapPaymentStatus(info.rawStatus);
         } else {
-          console.warn(`[iVeri Security] Could not verify payment status with gateway for order ${orderNumber}. Failing safe.`);
-          paymentStatus = "failed";
+          console.warn(`[iVeri Security] Could not verify payment status with gateway for order ${orderNumber}. Failing safe by not updating.`);
+          queryFailed = true;
         }
+      }
+
+      if (queryFailed) {
+        return json({ 
+          success: false, 
+          paymentStatus: order.payment_status || "pending", 
+          error: "Could not verify payment status with gateway" 
+        });
       }
 
       if (paymentStatus !== "paid") {
@@ -315,21 +390,42 @@ Deno.serve(async (req) => {
 
       const wasPaid = order.payment_status === "paid";
 
+      const isUpgrade = order.shipping_method && order.shipping_method.startsWith("plan_upgrade:");
+      const targetStatus = isUpgrade ? "completed" : "pending";
+
       await supabaseAdmin
         .from("orders")
         .update({
           payment_status: "paid",
-          status: "pending",
+          status: targetStatus,
           iveri_transaction_id: transactionId,
         })
         .eq("order_number", orderNumber)
         .eq("user_id", user.id);
 
       if (!wasPaid) {
-        try {
-          await sendOrderConfirmationEmail(supabaseAdmin, supabaseServiceKey, order, orderNumber);
-        } catch (e) {
-          console.error("[iVeri] confirm-payment email failed:", e);
+        if (isUpgrade) {
+          const tier = order.shipping_method.split(":")[1];
+          const { error: shopUpdateErr } = await supabaseAdmin
+            .from("shops")
+            .update({ pricing_tier: tier })
+            .eq("id", order.shop_id);
+          if (shopUpdateErr) {
+            console.error(`[iVeri Upgrade] Failed to update shop ${order.shop_id} pricing_tier to ${tier}:`, shopUpdateErr.message);
+          } else {
+            console.log(`[iVeri Upgrade] Upgraded shop ${order.shop_id} to ${tier}`);
+          }
+          try {
+            await sendPlanUpgradeConfirmationEmail(supabaseAdmin, supabaseServiceKey, order, orderNumber);
+          } catch (e) {
+            console.error("[iVeri Upgrade] confirm-payment email failed:", e);
+          }
+        } else {
+          try {
+            await sendOrderConfirmationEmail(supabaseAdmin, supabaseServiceKey, order, orderNumber);
+          } catch (e) {
+            console.error("[iVeri] confirm-payment email failed:", e);
+          }
         }
       }
 
@@ -359,7 +455,7 @@ Deno.serve(async (req) => {
     };
 
     if (!items?.length || !address) {
-      return json({ error: "Invalid payload: items and address are required" }, 400);
+      return json({ success: false, error: "Invalid payload: items and address are required" }, 200);
     }
 
     const { fields: lineItemFields, totalCents } = buildLineItemFields(items, Number(shippingCost) || 0);
@@ -375,6 +471,8 @@ Deno.serve(async (req) => {
       if (!byShop.has(sid)) byShop.set(sid, []);
       byShop.get(sid)!.push(item);
     }
+
+    const isUpgrade = shippingMethod && shippingMethod.startsWith("plan_upgrade:");
 
     for (const [shopId, shopItems] of byShop) {
       const orderTotalForShop = shopItems.reduce((s, i) => s + i.product.price * i.quantity, 0);
@@ -405,18 +503,21 @@ Deno.serve(async (req) => {
         .single();
 
       if (orderError) {
-        return json({ error: "Could not create order records", details: orderError.message }, 500);
+        return json({ success: false, error: `Could not create order records: ${orderError.message}` }, 200);
       }
 
-      for (const it of shopItems) {
-        const { error: itemError } = await supabaseAdmin.from("order_items").insert({
-          order_id: order.id,
-          product_id: it.product.id,
-          quantity: it.quantity,
-          price: Number(it.product.price),
-        });
-        if (itemError) {
-          return json({ error: "Could not save order item records", details: itemError.message }, 500);
+      if (!isUpgrade) {
+        for (const it of shopItems) {
+          const { error: itemError } = await supabaseAdmin.from("order_items").insert({
+            order_id: order.id,
+            product_id: it.product.id,
+            quantity: it.quantity,
+            price: Number(it.product.price),
+            selected_variants: it.selectedVariants || null,
+          });
+          if (itemError) {
+            return json({ success: false, error: `Could not save order item records: ${itemError.message}` }, 200);
+          }
         }
       }
     }
@@ -469,6 +570,6 @@ Deno.serve(async (req) => {
     });
   } catch (err) {
     console.error("[iVeri Gateway] Fatal:", err);
-    return json({ error: "Internal Server Error", details: (err as Error).message }, 500);
+    return json({ success: false, error: `Internal Server Error: ${(err as Error).message}` }, 200);
   }
 });

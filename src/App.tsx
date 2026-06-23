@@ -30,6 +30,7 @@ import SellerDashboardPage from "./pages/SellerDashboardPage";
 import AdminDashboardPage from "./pages/AdminDashboardPage";
 import DevDashboardPage from "./pages/DevDashboardPage";
 import PricingPage from "./pages/PricingPage";
+import UpgradeShopPage from "./pages/UpgradeShopPage";
 import SuccessStoriesPage from "./pages/SuccessStoriesPage";
 import WishlistPage from "./pages/WishlistPage";
 import OrderHistoryPage from "./pages/OrderHistoryPage";
@@ -47,6 +48,21 @@ const checkAuthRedirect = () => {
   
   if (path === '/auth' || path.startsWith('/auth/')) {
     window.location.replace(`${window.location.origin}/#/auth${search}${hash}`);
+    return true;
+  }
+
+  if (path === '/order-confirmation' || path.startsWith('/order-confirmation/')) {
+    window.location.replace(`${window.location.origin}/#/order-confirmation${search}${hash}`);
+    return true;
+  }
+
+  if (path === '/checkout' || path.startsWith('/checkout/')) {
+    window.location.replace(`${window.location.origin}/#/checkout${search}${hash}`);
+    return true;
+  }
+
+  if (path === '/order-failed' || path.startsWith('/order-failed/')) {
+    window.location.replace(`${window.location.origin}/#/order-failed${search}${hash}`);
     return true;
   }
   
@@ -103,6 +119,7 @@ const App = () => (
               <Route path="/admin" element={<AdminDashboardPage />} />
               <Route path="/dev" element={<DevDashboardPage />} />
               <Route path="/pricing" element={<PricingPage />} />
+              <Route path="/upgrade-plan" element={<UpgradeShopPage />} />
               <Route path="/success-stories" element={<SuccessStoriesPage />} />
               <Route path="/wishlist" element={<WishlistPage />} />
               <Route path="/orders" element={<OrderHistoryPage />} />

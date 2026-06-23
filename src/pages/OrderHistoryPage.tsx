@@ -204,10 +204,17 @@ const OrderHistoryPage = () => {
                         {order.order_items && order.order_items.length > 0 && (
                           <ul className="space-y-1 text-sm text-muted-foreground border-t border-border pt-2">
                             {order.order_items.map((oi) => (
-                              <li key={oi.id} className="flex justify-between">
-                                <span>
-                                  {oi.products?.name ?? 'Product'} × {oi.quantity}
-                                </span>
+                              <li key={oi.id} className="flex justify-between items-start">
+                                <div>
+                                  <span>
+                                    {oi.products?.name ?? 'Product'} × {oi.quantity}
+                                  </span>
+                                  {oi.selected_variants && typeof oi.selected_variants === 'object' && Object.keys(oi.selected_variants).length > 0 && (
+                                    <p className="text-xs text-muted-foreground mt-0.5">
+                                      {Object.entries(oi.selected_variants).map(([k, v]) => `${k}: ${v}`).join(', ')}
+                                    </p>
+                                  )}
+                                </div>
                                 <span>${Number(oi.price * oi.quantity).toFixed(2)}</span>
                               </li>
                             ))}

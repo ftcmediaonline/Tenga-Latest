@@ -847,6 +847,116 @@ async function handleAdminPromo(ctx: AuthContext, body: Record<string, unknown>)
   });
 }
 
+async function handleContactUs(body: Record<string, unknown>): Promise<Response> {
+  const name = typeof body.name === "string" ? body.name.trim() : "";
+  const email = typeof body.email === "string" ? body.email.trim() : "";
+  const message = typeof body.message === "string" ? body.message.trim() : "";
+
+  if (!email || !isValidEmail(email)) return jsonResponse({ error: "Valid email is required" }, 400);
+  if (!name) return jsonResponse({ error: "Name is required" }, 400);
+  if (!message) return jsonResponse({ error: "Message is required" }, 400);
+
+  const env = getAuthEnv();
+  const supabaseAdmin = createClient(env.supabaseUrl, env.supabaseServiceKey);
+
+  // 0. Save the inquiry to the database
+  try {
+    const { error: dbError } = await supabaseAdmin
+      .from("contact_inquiries")
+      .insert({ name, email, message });
+    if (dbError) {
+      console.error("Failed to save contact inquiry to database:", dbError);
+    }
+  } catch (err) {
+    console.error("Exception while saving contact inquiry:", err);
+  }
+
+  // 1. Send confirmation email to the customer
+  const customerHtml = wrapInTengaTemplate(`
+    <span class="accent-badge">Message Received</span>
+    <h2 class="headline">We've received your message!</h2>
+    <p>Hi ${escapeHtml(name)},</p>
+    <p>Thank you for contacting Tenga Virtual Mall. We have received your message and our team will get back to you as soon as possible.</p>
+    <p><strong>Your Message:</strong></p>
+    <div style="background-color: #f8fafc; border-radius: 8px; padding: 16px; border: 1px solid #f1f5f9; font-style: italic; color: #475569;">
+      "${escapeHtml(message).replace(/\n/g, "<br/>")}"
+    </div>
+    <p style="color: #64748b; margin-top: 24px; font-size: 14px;">Best regards, — The Tenga team</p>
+  `, "We received your message");
+
+  await sendEmail({
+    from: transactionalFrom(),
+    to: email,
+    subject: "We received your message — Tenga Virtual Mall",
+    html: customerHtml,
+    tags: [
+      { name: "category", value: "transactional" },
+      { name: "type", value: "contact_confirmation" },
+    ],
+  });
+
+  // 2. Look up Master Admins to notify them
+  const adminEmails: string[] = [];
+  try {
+    const { data: adminProfiles } = await supabaseAdmin
+      .from("profiles")
+      .select("id")
+      .eq("role", "admin");
+
+    if (adminProfiles) {
+      for (const admin of adminProfiles) {
+        const { data: adminUser } = await supabaseAdmin.auth.admin.getUserById(admin.id);
+        const aEmail = adminUser?.user?.email;
+        if (aEmail && isValidEmail(aEmail.trim()) && !adminEmails.includes(aEmail.trim())) {
+          adminEmails.push(aEmail.trim());
+        }
+      }
+    }
+  } catch (err) {
+    console.error("Failed to query admin profiles:", err);
+  }
+
+  const envAdminEmail = Deno.env.get("MASTER_ADMIN_EMAIL");
+  if (envAdminEmail && isValidEmail(envAdminEmail.trim()) && !adminEmails.includes(envAdminEmail.trim())) {
+    adminEmails.push(envAdminEmail.trim());
+  }
+
+  // 3. Send the message copy to the admins
+  const adminHtml = wrapInTengaTemplate(`
+    <span class="accent-badge" style="background-color: rgba(15, 23, 42, 0.08); color: #0f172a;">New Support Message</span>
+    <h2 class="headline">New Message from Contact Form</h2>
+    <p><strong>Sender Details:</strong></p>
+    <ul class="details-list">
+      <li><strong>Name:</strong> ${escapeHtml(name)}</li>
+      <li><strong>Email:</strong> ${escapeHtml(email)}</li>
+    </ul>
+    <p><strong>Message:</strong></p>
+    <div style="background-color: #f8fafc; border-radius: 8px; padding: 16px; border: 1px solid #f1f5f9; color: #0f172a;">
+      ${escapeHtml(message).replace(/\n/g, "<br/>")}
+    </div>
+    <p style="color: #64748b; margin-top: 24px; font-size: 14px;">Tenga System Support Alert</p>
+  `, `New contact message from ${name}`);
+
+  for (const adminEmail of adminEmails) {
+    try {
+      await sendEmail({
+        from: transactionalFrom(),
+        to: adminEmail,
+        subject: `[Tenga Contact Form] Message from ${name}`,
+        html: adminHtml,
+        tags: [
+          { name: "category", value: "transactional" },
+          { name: "type", value: "admin_contact_notification" },
+        ],
+      });
+    } catch (err) {
+      console.error(`Failed to send email to admin ${adminEmail}:`, err);
+    }
+  }
+
+  return jsonResponse({ success: true, sent: true });
+}
+
 async function handleWelcomeNewsletter(_ctx: AuthContext, body: Record<string, unknown>): Promise<Response> {
   const email = typeof body.email === "string" ? body.email.trim() : "";
   const customerName = typeof body.customerName === "string" ? body.customerName.trim() : "Shopper";
@@ -891,13 +1001,123 @@ async function handleWelcomeNewsletter(_ctx: AuthContext, body: Record<string, u
   return jsonResponse({ sent: true, id: result.id });
 }
 
+async function handlePlanUpgradeConfirmation(ctx: AuthContext, body: Record<string, unknown>): Promise<Response> {
+  const email = typeof body.email === "string" ? body.email.trim() : "";
+  const customerName = typeof body.customerName === "string" ? body.customerName.trim() : "Store Owner";
+  const orderNumber = typeof body.orderNumber === "string" ? body.orderNumber.trim() : "";
+  const tier = typeof body.tier === "string" ? body.tier.trim() : "";
+  const total = Number(body.total);
+
+  if (!email || !isValidEmail(email)) return jsonResponse({ error: "Valid email is required" }, 400);
+  if (!orderNumber) return jsonResponse({ error: "orderNumber is required" }, 400);
+  if (!tier) return jsonResponse({ error: "tier is required" }, 400);
+  if (!Number.isFinite(total) || total < 0) return jsonResponse({ error: "total is required" }, 400);
+
+  const safeTier = escapeHtml(tier);
+  const safeName = escapeHtml(customerName);
+
+  // 1. Send upgrade confirmation email to the shop owner
+  const customerHtml = wrapInTengaTemplate(`
+    <span class="accent-badge" style="background-color: rgba(139, 92, 246, 0.08); color: #8b5cf6;">Plan Upgraded Successfully</span>
+    <h2 class="headline">Your plan has been upgraded!</h2>
+    <p>Hi ${safeName},</p>
+    <p>Thank you for subscribing to the premium features of Tenga! Your payment was successful, and your shop has been upgraded to the <strong>${safeTier.toUpperCase()} Plan</strong>.</p>
+    <p><strong>Subscription details:</strong></p>
+    <ul class="details-list">
+      <li><strong>Plan Tier:</strong> ${safeTier.toUpperCase()}</li>
+      <li><strong>Order Number:</strong> ${escapeHtml(orderNumber)}</li>
+      <li><strong>Amount Paid:</strong> $${total.toFixed(2)}</li>
+      <li><strong>Status:</strong> Active</li>
+    </ul>
+    <p>All paid features are now available on your seller dashboard. Keep growing your business!</p>
+    <p style="color: #64748b; margin-top: 24px; font-size: 14px;">If you have any questions, feel free to reply to this message. — The Tenga team</p>
+  `, `Tenga subscription upgraded to ${tier.toUpperCase()}`);
+
+  const customerResult = await sendEmail({
+    from: transactionalFrom(),
+    to: email,
+    subject: `Tenga subscription upgraded to ${tier.toUpperCase()}`,
+    html: customerHtml,
+    idempotencyKey: `plan-upgrade-confirmation/${orderNumber}`,
+    tags: [
+      { name: "category", value: "transactional" },
+      { name: "type", value: "plan_upgrade_confirmation" },
+    ],
+  });
+
+  if (!customerResult.ok) {
+    console.error("Failed to send customer plan upgrade confirmation:", customerResult.error);
+  }
+
+  // 2. Lookup and notify all platform admins
+  try {
+    const supabaseAdmin = createClient(ctx.supabaseUrl, ctx.supabaseServiceKey);
+    const adminEmails: string[] = [];
+    const { data: adminProfiles } = await supabaseAdmin
+      .from("profiles")
+      .select("id")
+      .eq("role", "admin");
+
+    if (adminProfiles) {
+      for (const admin of adminProfiles) {
+        const { data: adminUser } = await supabaseAdmin.auth.admin.getUserById(admin.id);
+        const aEmail = adminUser?.user?.email;
+        if (aEmail && isValidEmail(aEmail.trim()) && !adminEmails.includes(aEmail.trim())) {
+          adminEmails.push(aEmail.trim());
+        }
+      }
+    }
+
+    const envAdminEmail = Deno.env.get("MASTER_ADMIN_EMAIL");
+    if (envAdminEmail && isValidEmail(envAdminEmail.trim()) && !adminEmails.includes(envAdminEmail.trim())) {
+      adminEmails.push(envAdminEmail.trim());
+    }
+
+    for (const adminEmail of adminEmails) {
+      const adminHtml = wrapInTengaTemplate(`
+        <span class="accent-badge" style="background-color: rgba(15, 23, 42, 0.08); color: #0f172a;">Platform Upgrade Notice</span>
+        <h2 class="headline">New Plan Subscription Upgrade Report</h2>
+        <p>Dear Administrator,</p>
+        <p>A shop owner has successfully upgraded their subscription plan on Tenga.</p>
+        <p><strong>Upgrade details:</strong></p>
+        <ul class="details-list">
+          <li><strong>Store Owner Name:</strong> ${safeName}</li>
+          <li><strong>Store Owner Email:</strong> ${escapeHtml(email)}</li>
+          <li><strong>Order/Invoice Number:</strong> ${escapeHtml(orderNumber)}</li>
+          <li><strong>Subscribed Plan:</strong> ${safeTier.toUpperCase()}</li>
+          <li><strong>Amount Paid:</strong> $${total.toFixed(2)}</li>
+        </ul>
+        <p style="color: #64748b; margin-top: 24px; font-size: 14px;">This is an automated system monitor report. — Tenga Virtual Mall</p>
+      `, `[Tenga Admin] Shop Subscribed to ${tier.toUpperCase()}`);
+
+      await sendEmail({
+        from: transactionalFrom(),
+        to: adminEmail,
+        subject: `[Tenga Admin] Shop Subscribed to ${tier.toUpperCase()} #${orderNumber}`,
+        html: adminHtml,
+        idempotencyKey: `plan-upgrade-confirmation-admin/${adminEmail}/${orderNumber}`,
+        tags: [
+          { name: "category", value: "transactional" },
+          { name: "type", value: "plan_upgrade_confirmation_admin" },
+        ],
+      });
+    }
+  } catch (err) {
+    console.error("Failed to fetch admin list for plan upgrade notification:", err);
+  }
+
+  return jsonResponse({ sent: true, id: customerResult.id || "success" });
+}
+
 const ACTIONS = new Set([
   "shop-confirmation",
   "order-confirmation",
+  "plan-upgrade-confirmation",
   "shop-approved",
   "promotional-email",
   "admin-promo-store-owners",
   "welcome-newsletter",
+  "contact-us",
 ]);
 
 Deno.serve(async (req: Request) => {
@@ -921,24 +1141,30 @@ Deno.serve(async (req: Request) => {
     }
 
     const auth =
-      action === "order-confirmation"
-        ? await requireUserOrService(req)
-        : await requireUser(req);
+      action === "contact-us"
+        ? null
+        : (action === "order-confirmation" || action === "plan-upgrade-confirmation")
+          ? await requireUserOrService(req)
+          : await requireUser(req);
     if (auth instanceof Response) return auth;
 
     switch (action) {
+      case "contact-us":
+        return await handleContactUs(body);
       case "shop-confirmation":
-        return await handleShopConfirmation(auth, body);
+        return await handleShopConfirmation(auth!, body);
       case "order-confirmation":
-        return await handleOrderConfirmation(auth, body);
+        return await handleOrderConfirmation(auth!, body);
+      case "plan-upgrade-confirmation":
+        return await handlePlanUpgradeConfirmation(auth!, body);
       case "shop-approved":
-        return await handleShopApproved(auth, body);
+        return await handleShopApproved(auth!, body);
       case "promotional-email":
-        return await handlePromotionalEmail(auth, body);
+        return await handlePromotionalEmail(auth!, body);
       case "admin-promo-store-owners":
-        return await handleAdminPromo(auth, body);
+        return await handleAdminPromo(auth!, body);
       case "welcome-newsletter":
-        return await handleWelcomeNewsletter(auth, body);
+        return await handleWelcomeNewsletter(auth!, body);
       default:
         return jsonResponse({ error: "Unknown action" }, 400);
     }

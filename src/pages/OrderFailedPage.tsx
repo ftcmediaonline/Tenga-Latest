@@ -23,6 +23,8 @@ const OrderFailedPage = () => {
 
   useEffect(() => {
     const orderNumber = searchParams.get('order');
+    const nonce = searchParams.get('nonce');
+    
     if (orderNumber) {
       const saved = loadIveriPendingOrder<IveriPendingOrder>(orderNumber);
       if (saved) {
@@ -35,6 +37,25 @@ const OrderFailedPage = () => {
       setErrorDescription(parsed.description);
     } else if (searchParams.get('description')) {
       setErrorDescription(searchParams.get('description') || '');
+    }
+
+    if (orderNumber && nonce) {
+      const iveriStatus = parsed.status ?? '255'; // Default to error if not found
+      (async () => {
+        try {
+          await supabase.functions.invoke('iveri-gateway', {
+            body: {
+              action: 'confirm-payment',
+              orderNumber,
+              checkoutNonce: nonce,
+              litePaymentCardStatus: String(iveriStatus),
+              transactionIndex: parsed.transactionIndex ?? undefined,
+            },
+          });
+        } catch (e) {
+          console.error('[OrderFailed] failed updating status on server:', e);
+        }
+      })();
     }
   }, [searchParams, location.hash]);
 

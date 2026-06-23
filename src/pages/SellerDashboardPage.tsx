@@ -33,6 +33,8 @@ import {
   ShoppingCart,
   Send,
   Mail,
+  TrendingUp,
+  Sparkles,
 } from 'lucide-react';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -378,13 +380,18 @@ const SellerDashboardPage = () => {
   const handleAddProduct = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!shop || !user) return;
-    setAddError(null);
-    const name = addName.trim();
-    const price = parseFloat(addPrice);
-    if (!name || isNaN(price) || price < 0) {
-      setAddError('Name and a valid price are required.');
+    // Enforce pricing plan product limits
+    const currentCount = products.length;
+    const tier = (shop as any).pricing_tier ?? 'starter';
+    if (tier === 'starter' && currentCount >= 10) {
+      setAddError('You have reached the limit of 10 products for the Starter plan. Please upgrade to the Growth plan.');
       return;
     }
+    if (tier === 'growth' && currentCount >= 100) {
+      setAddError('You have reached the limit of 100 products for the Growth plan. Please upgrade to the Enterprise plan.');
+      return;
+    }
+
     if (!addImageFile) {
       setAddError('Please add a product image.');
       return;
@@ -635,7 +642,21 @@ const SellerDashboardPage = () => {
       <main className="flex-1 container py-8 sm:py-12 px-4 sm:px-6">
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6 sm:mb-8">
           <div>
-            <h1 className="text-3xl font-bold">{shop.name}</h1>
+            <div className="flex flex-wrap items-center gap-3">
+              <h1 className="text-3xl font-bold">{shop.name}</h1>
+              {(shop as any).pricing_tier === 'growth' && (
+                <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-indigo-500/10 text-indigo-500 dark:text-indigo-400 border border-indigo-500/20">
+                  <TrendingUp className="h-3.5 w-3.5" />
+                  Growth
+                </div>
+              )}
+              {(shop as any).pricing_tier === 'enterprise' && (
+                <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-amber-500/10 text-amber-500 dark:text-amber-400 border border-amber-500/20">
+                  <Sparkles className="h-3.5 w-3.5" />
+                  Enterprise
+                </div>
+              )}
+            </div>
             <p className="text-muted-foreground mt-1">Manage your products and reply to reviews.</p>
           </div>
           <div className="flex gap-2">
@@ -673,10 +694,69 @@ const SellerDashboardPage = () => {
           </TabsList>
 
           <TabsContent value="products" className="space-y-4">
+            {/* Premium Subscription Plan Status Panel */}
+            <div className="rounded-xl border border-border bg-card/60 backdrop-blur p-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+              <div className="flex items-center gap-3">
+                <div className="p-2 bg-primary/10 text-primary rounded-lg shrink-0">
+                  <Package className="h-5 w-5" />
+                </div>
+                <div>
+                  <p className="text-sm font-semibold capitalize">{(shop as any).pricing_tier ?? 'starter'} Plan</p>
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    {(shop as any).pricing_tier === 'enterprise' 
+                      ? `${products.length} products listed (Unlimited)`
+                      : `${products.length} of ${(shop as any).pricing_tier === 'growth' ? 100 : 10} products listed`}
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-center gap-3 w-full sm:w-auto justify-between sm:justify-end">
+                {/* Progress bar */}
+                {(shop as any).pricing_tier !== 'enterprise' && (
+                  <div className="w-24 sm:w-32 bg-secondary h-2 rounded-full overflow-hidden shrink-0">
+                    <div 
+                      className={`h-full rounded-full transition-all ${
+                        products.length >= ((shop as any).pricing_tier === 'growth' ? 100 : 10) 
+                          ? 'bg-destructive' 
+                          : 'bg-primary'
+                      }`}
+                      style={{ width: `${Math.min(100, (products.length / ((shop as any).pricing_tier === 'growth' ? 100 : 10)) * 100)}%` }}
+                    />
+                  </div>
+                )}
+                {(shop as any).pricing_tier !== 'enterprise' && (
+                  <Button size="sm" variant="outline" className="text-xs h-8 border-primary/30 text-primary hover:bg-primary/5" asChild>
+                    <Link to="/pricing">Upgrade Plan</Link>
+                  </Button>
+                )}
+              </div>
+            </div>
+
             <Card>
               <CardHeader className="flex flex-row items-center justify-between">
                 <CardTitle>Your products</CardTitle>
-                <Dialog open={addOpen} onOpenChange={setAddOpen}>
+                <Dialog open={addOpen} onOpenChange={(open) => {
+                  if (open) {
+                    const currentCount = products.length;
+                    const tier = (shop as any).pricing_tier ?? 'starter';
+                    if (tier === 'starter' && currentCount >= 10) {
+                      toast({
+                        title: 'Product limit reached',
+                        description: 'You have reached the limit of 10 products for the Starter plan. Please upgrade to add more products.',
+                        variant: 'destructive',
+                      });
+                      return;
+                    }
+                    if (tier === 'growth' && currentCount >= 100) {
+                      toast({
+                        title: 'Product limit reached',
+                        description: 'You have reached the limit of 100 products for the Growth plan. Please upgrade to add more products.',
+                        variant: 'destructive',
+                      });
+                      return;
+                    }
+                  }
+                  setAddOpen(open);
+                }}>
                   <DialogTrigger asChild>
                     <Button size="sm">
                       <Plus className="h-4 w-4 mr-1" />
@@ -940,10 +1020,17 @@ const SellerDashboardPage = () => {
                           {order.order_items && order.order_items.length > 0 && (
                             <ul className="space-y-1 text-sm text-muted-foreground border-t border-border pt-2">
                               {order.order_items.map((oi) => (
-                                <li key={oi.id} className="flex justify-between">
-                                  <span>
-                                    {oi.products?.name ?? 'Product'} × {oi.quantity}
-                                  </span>
+                                <li key={oi.id} className="flex justify-between items-start">
+                                  <div>
+                                    <span>
+                                      {oi.products?.name ?? 'Product'} × {oi.quantity}
+                                    </span>
+                                    {oi.selected_variants && typeof oi.selected_variants === 'object' && Object.keys(oi.selected_variants).length > 0 && (
+                                      <p className="text-xs text-muted-foreground mt-0.5">
+                                        {Object.entries(oi.selected_variants).map(([k, v]) => `${k}: ${v}`).join(', ')}
+                                      </p>
+                                    )}
+                                  </div>
                                   <span>${Number(oi.price * oi.quantity).toFixed(2)}</span>
                                 </li>
                               ))}
@@ -1287,70 +1374,85 @@ const SellerDashboardPage = () => {
                 </p>
               </CardHeader>
               <CardContent>
-                <form onSubmit={handleSendPromo} className="space-y-4 max-w-xl">
-                  <div>
-                    <Label htmlFor="promo-subject">Subject *</Label>
-                    <Input
-                      id="promo-subject"
-                      value={promoSubject}
-                      onChange={(e) => setPromoSubject(e.target.value)}
-                      placeholder="e.g. 20% off this weekend"
-                      className="mt-1"
-                      disabled={promoSending}
-                    />
-                  </div>
-                  <div>
-                    <Label htmlFor="promo-body">Message *</Label>
-                    <Textarea
-                      id="promo-body"
-                      value={promoBody}
-                      onChange={(e) => setPromoBody(e.target.value)}
-                      placeholder="Write your message. You can use plain text or simple HTML."
-                      rows={6}
-                      className="mt-1"
-                      disabled={promoSending}
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label>Send to</Label>
-                    <div className="flex flex-wrap gap-4">
-                      <label className="flex items-center gap-2 cursor-pointer">
-                        <Checkbox
-                          checked={promoAudience.includes('followers')}
-                          onCheckedChange={(checked) => {
-                            setPromoAudience((prev) =>
-                              checked ? [...prev.filter((a) => a !== 'followers'), 'followers'] : prev.filter((a) => a !== 'followers')
-                            );
-                          }}
-                          disabled={promoSending}
-                        />
-                        <span className="text-sm">Followers</span>
-                      </label>
-                      <label className="flex items-center gap-2 cursor-pointer">
-                        <Checkbox
-                          checked={promoAudience.includes('customers')}
-                          onCheckedChange={(checked) => {
-                            setPromoAudience((prev) =>
-                              checked ? [...prev.filter((a) => a !== 'customers'), 'customers'] : prev.filter((a) => a !== 'customers')
-                            );
-                          }}
-                          disabled={promoSending}
-                        />
-                        <span className="text-sm">Past customers</span>
-                      </label>
+                {(shop as any).pricing_tier === 'starter' ? (
+                  <div className="py-12 px-4 text-center max-w-md mx-auto">
+                    <div className="h-12 w-12 rounded-full bg-primary/10 text-primary flex items-center justify-center mx-auto mb-4">
+                      <Mail className="h-6 w-6" />
                     </div>
+                    <h3 className="text-lg font-bold mb-2">Unlock Promotional Tools</h3>
+                    <p className="text-sm text-muted-foreground mb-6">
+                      Promotional email campaigns are available on Growth and Enterprise plans. Directly connect with your shop followers and past customers to drive sales.
+                    </p>
+                    <Button asChild className="bg-gradient-primary">
+                      <Link to="/pricing">Upgrade Plan</Link>
+                    </Button>
                   </div>
-                  <Button type="submit" disabled={promoSending || promoAudience.length === 0}>
-                    {promoSending ? (
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                    ) : (
-                      <>
-                        <Send className="h-4 w-4 mr-1" />
-                        Send promotional email
-                      </>
-                    )}
-                  </Button>
-                </form>
+                ) : (
+                  <form onSubmit={handleSendPromo} className="space-y-4 max-w-xl">
+                    <div>
+                      <Label htmlFor="promo-subject">Subject *</Label>
+                      <Input
+                        id="promo-subject"
+                        value={promoSubject}
+                        onChange={(e) => setPromoSubject(e.target.value)}
+                        placeholder="e.g. 20% off this weekend"
+                        className="mt-1"
+                        disabled={promoSending}
+                      />
+                    </div>
+                    <div>
+                      <Label htmlFor="promo-body">Message *</Label>
+                      <Textarea
+                        id="promo-body"
+                        value={promoBody}
+                        onChange={(e) => setPromoBody(e.target.value)}
+                        placeholder="Write your message. You can use plain text or simple HTML."
+                        rows={6}
+                        className="mt-1"
+                        disabled={promoSending}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Send to</Label>
+                      <div className="flex flex-wrap gap-4">
+                        <label className="flex items-center gap-2 cursor-pointer">
+                          <Checkbox
+                            checked={promoAudience.includes('followers')}
+                            onCheckedChange={(checked) => {
+                              setPromoAudience((prev) =>
+                                checked ? [...prev.filter((a) => a !== 'followers'), 'followers'] : prev.filter((a) => a !== 'followers')
+                              );
+                            }}
+                            disabled={promoSending}
+                          />
+                          <span className="text-sm">Followers</span>
+                        </label>
+                        <label className="flex items-center gap-2 cursor-pointer">
+                          <Checkbox
+                            checked={promoAudience.includes('customers')}
+                            onCheckedChange={(checked) => {
+                              setPromoAudience((prev) =>
+                                checked ? [...prev.filter((a) => a !== 'customers'), 'customers'] : prev.filter((a) => a !== 'customers')
+                              );
+                            }}
+                            disabled={promoSending}
+                          />
+                          <span className="text-sm">Past customers</span>
+                        </label>
+                      </div>
+                    </div>
+                    <Button type="submit" disabled={promoSending || promoAudience.length === 0}>
+                      {promoSending ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <>
+                          <Send className="h-4 w-4 mr-1" />
+                          Send promotional email
+                        </>
+                      )}
+                    </Button>
+                  </form>
+                )}
               </CardContent>
             </Card>
           </TabsContent>

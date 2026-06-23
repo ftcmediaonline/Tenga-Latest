@@ -7,6 +7,7 @@ import { Separator } from '@/components/ui/separator';
 import Header from '@/components/layout/Header';
 import Footer from '@/components/layout/Footer';
 import CartDrawer from '@/components/layout/CartDrawer';
+import { useCart } from '@/context/CartContext';
 import { supabase } from '@/integrations/supabase/client';
 import {
   clearIveriCheckoutSession,
@@ -15,6 +16,7 @@ import {
   parseIveriFromUrl,
   type IveriPendingOrder,
 } from '@/utils/iveri';
+import { sendTransactionalEmail } from '@/utils/emailService';
 
 const shippingLabels: Record<string, string> = {
   pickup: 'Store Pickup',
@@ -26,6 +28,7 @@ const OrderConfirmationPage = () => {
   const location = useLocation();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
+  const { clearCart } = useCart();
   const [order, setOrder] = useState<IveriPendingOrder | undefined>(
     location.state as IveriPendingOrder | undefined,
   );
@@ -71,6 +74,30 @@ const OrderConfirmationPage = () => {
               transactionIndex: parsed.transactionIndex ?? undefined,
             },
           });
+
+          // Send transactional email directly from client, identical to Cash on Delivery flow
+          try {
+            const savedOrder = loadIveriPendingOrder<IveriPendingOrder>(orderNumber);
+            if (savedOrder) {
+              await sendTransactionalEmail({
+                action: 'order-confirmation',
+                email: savedOrder.shippingAddress.email,
+                customerName: `${savedOrder.shippingAddress.firstName} ${savedOrder.shippingAddress.lastName}`.trim(),
+                orderNumber,
+                shippingMethod: savedOrder.shippingMethod,
+                total: savedOrder.total,
+                items: savedOrder.items.map((i) => ({
+                  name: i.name,
+                  qty: i.qty,
+                  price: Number(i.price),
+                })),
+              });
+            }
+          } catch (emailErr) {
+            console.error('[OrderConfirmation] Client email send failed:', emailErr);
+          }
+
+          clearCart();
         }
         clearIveriCheckoutSession(orderNumber);
       } catch (e) {
@@ -122,98 +149,163 @@ const OrderConfirmationPage = () => {
             >
               <CheckCircle2 className="h-12 w-12 text-[hsl(var(--success))]" />
             </motion.div>
-            <h1 className="text-2xl md:text-3xl font-bold mb-2">Order Confirmed!</h1>
+            <h1 className="text-2xl md:text-3xl font-bold mb-2">
+              {order.shippingMethod?.startsWith('plan_upgrade:') ? 'Plan Upgraded Successfully!' : 'Order Confirmed!'}
+            </h1>
             <p className="text-muted-foreground">
-              Thank you for your purchase. Your order number is{' '}
+              {order.shippingMethod?.startsWith('plan_upgrade:') 
+                ? 'Thank you for upgrading. Your receipt number is '
+                : 'Thank you for your purchase. Your order number is '}
               <span className="font-semibold text-foreground">{order.orderNumber}</span>
             </p>
           </motion.div>
 
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.3 }}
-            className="rounded-xl border border-border overflow-hidden"
-          >
-            <div className="p-6 space-y-4">
-              <h2 className="font-semibold flex items-center gap-2">
-                <Package className="h-5 w-5 text-primary" />
-                Order items
-              </h2>
-              <ul className="space-y-3">
-                {order.items.map((item, i) => (
-                  <li key={i} className="flex gap-3">
-                    <img
-                      src={item.image}
-                      alt={item.name}
-                      className="h-14 w-14 rounded-lg object-cover"
-                    />
-                    <div className="flex-1 min-w-0">
-                      <p className="font-medium text-sm truncate">{item.name}</p>
-                      <p className="text-xs text-muted-foreground">Qty: {item.qty}</p>
-                    </div>
-                    <p className="font-medium text-sm">${(item.price * item.qty).toFixed(2)}</p>
+          {order.shippingMethod?.startsWith('plan_upgrade:') ? (
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: 0.3 }}
+              className="rounded-xl border border-border overflow-hidden bg-card/40 backdrop-blur p-6 space-y-6"
+            >
+              <div className="text-center py-4">
+                <p className="text-xs font-semibold text-primary uppercase tracking-wider">Subscription Status</p>
+                <h3 className="text-3xl font-extrabold capitalize mt-2 bg-clip-text text-transparent bg-gradient-to-r from-primary to-indigo-500">
+                  {order.shippingMethod.split(':')[1]} Active
+                </h3>
+              </div>
+              <Separator />
+              <div className="space-y-4">
+                <h4 className="font-bold text-sm">Newly Unlocked Premium Features:</h4>
+                <ul className="space-y-3 text-sm text-muted-foreground">
+                  <li className="flex items-center gap-2.5">
+                    <span className="h-2 w-2 rounded-full bg-primary" />
+                    <span>
+                      {order.shippingMethod.split(':')[1] === 'growth' 
+                        ? 'List up to 100 products' 
+                        : 'Unlimited product listings'}
+                    </span>
                   </li>
-                ))}
-              </ul>
-            </div>
+                  <li className="flex items-center gap-2.5">
+                    <span className="h-2 w-2 rounded-full bg-primary" />
+                    <span>Custom shop banner branding enabled</span>
+                  </li>
+                  <li className="flex items-center gap-2.5">
+                    <span className="h-2 w-2 rounded-full bg-primary" />
+                    <span>Promotional email campaigns unlocked</span>
+                  </li>
+                  <li className="flex items-center gap-2.5">
+                    <span className="h-2 w-2 rounded-full bg-primary" />
+                    <span>Advanced analytics and customer insights activated</span>
+                  </li>
+                </ul>
+              </div>
+              <Separator />
+              <div className="flex justify-between items-center text-sm font-semibold">
+                <span className="text-muted-foreground">Amount Charged</span>
+                <span className="text-lg font-bold">${order.total.toFixed(2)}</span>
+              </div>
+            </motion.div>
+          ) : (
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: 0.3 }}
+              className="rounded-xl border border-border overflow-hidden"
+            >
+              <div className="p-6 space-y-4">
+                <h2 className="font-semibold flex items-center gap-2">
+                  <Package className="h-5 w-5 text-primary" />
+                  Order items
+                </h2>
+                <ul className="space-y-3">
+                  {order.items.map((item, i) => (
+                    <li key={i} className="flex gap-3">
+                      <img
+                        src={item.image}
+                        alt={item.name}
+                        className="h-14 w-14 rounded-lg object-cover"
+                      />
+                      <div className="flex-1 min-w-0">
+                        <p className="font-medium text-sm truncate">{item.name}</p>
+                        <p className="text-xs text-muted-foreground">Qty: {item.qty}</p>
+                        {item.selectedVariants && Object.keys(item.selectedVariants).length > 0 && (
+                          <p className="text-xs text-muted-foreground mt-0.5 font-medium">
+                            {Object.values(item.selectedVariants).join(' / ')}
+                          </p>
+                        )}
+                      </div>
+                      <p className="font-medium text-sm">${(item.price * item.qty).toFixed(2)}</p>
+                    </li>
+                  ))}
+                </ul>
+              </div>
 
-            <Separator />
+              <Separator />
 
-            <div className="p-6 space-y-4">
-              <h2 className="font-semibold flex items-center gap-2">
-                <Truck className="h-5 w-5 text-primary" />
-                Shipping
-              </h2>
-              <p className="text-sm text-muted-foreground">
-                {shippingLabels[order.shippingMethod] ?? order.shippingMethod}
-                {order.shippingCost > 0 && ` — $${order.shippingCost.toFixed(2)}`}
-              </p>
-              <div className="flex items-start gap-2 text-sm">
-                <MapPin className="h-4 w-4 text-muted-foreground mt-0.5" />
-                <div>
-                  <p className="font-medium">
-                    {order.shippingAddress.firstName} {order.shippingAddress.lastName}
-                  </p>
-                  <p className="text-muted-foreground">{order.shippingAddress.address}</p>
-                  <p className="text-muted-foreground">
-                    {order.shippingAddress.city}, {order.shippingAddress.state}{' '}
-                    {order.shippingAddress.zipCode}
-                  </p>
-                  <p className="text-muted-foreground">{order.shippingAddress.country}</p>
-                  <p className="text-muted-foreground mt-1">{order.shippingAddress.email}</p>
+              <div className="p-6 space-y-4">
+                <h2 className="font-semibold flex items-center gap-2">
+                  <Truck className="h-5 w-5 text-primary" />
+                  Shipping
+                </h2>
+                <p className="text-sm text-muted-foreground">
+                  {shippingLabels[order.shippingMethod] ?? order.shippingMethod}
+                  {order.shippingCost > 0 && ` — $${order.shippingCost.toFixed(2)}`}
+                </p>
+                <div className="flex items-start gap-2 text-sm">
+                  <MapPin className="h-4 w-4 text-muted-foreground mt-0.5" />
+                  <div>
+                    <p className="font-medium">
+                      {order.shippingAddress.firstName} {order.shippingAddress.lastName}
+                    </p>
+                    <p className="text-muted-foreground">{order.shippingAddress.address}</p>
+                    <p className="text-muted-foreground">
+                      {order.shippingAddress.city}, {order.shippingAddress.state}{' '}
+                      {order.shippingAddress.zipCode}
+                    </p>
+                    <p className="text-muted-foreground">{order.shippingAddress.country}</p>
+                    <p className="text-muted-foreground mt-1">{order.shippingAddress.email}</p>
+                  </div>
                 </div>
               </div>
-            </div>
 
-            <Separator />
+              <Separator />
 
-            <div className="p-6 space-y-2 text-sm">
-              <div className="flex justify-between">
-                <span className="text-muted-foreground">Subtotal</span>
-                <span>${order.subtotal.toFixed(2)}</span>
-              </div>
-              {order.shippingCost > 0 && (
+              <div className="p-6 space-y-2 text-sm">
                 <div className="flex justify-between">
-                  <span className="text-muted-foreground">Shipping</span>
-                  <span>${order.shippingCost.toFixed(2)}</span>
+                  <span className="text-muted-foreground">Subtotal</span>
+                  <span>${order.subtotal.toFixed(2)}</span>
                 </div>
-              )}
-              <div className="flex justify-between font-semibold text-base pt-2">
-                <span>Total</span>
-                <span>${order.total.toFixed(2)}</span>
+                {order.shippingCost > 0 && (
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Shipping</span>
+                    <span>${order.shippingCost.toFixed(2)}</span>
+                  </div>
+                )}
+                <div className="flex justify-between font-semibold text-base pt-2">
+                  <span>Total</span>
+                  <span>${order.total.toFixed(2)}</span>
+                </div>
               </div>
-            </div>
-          </motion.div>
+            </motion.div>
+          )}
 
           <div className="mt-8 flex flex-col sm:flex-row gap-3 justify-center">
-            <Button onClick={() => navigate('/orders')} variant="outline">
-              View order history
-            </Button>
-            <Button onClick={() => navigate('/discover')} className="bg-gradient-primary gap-2">
-              Continue shopping
-              <ArrowRight className="h-4 w-4" />
-            </Button>
+            {order.shippingMethod?.startsWith('plan_upgrade:') ? (
+              <Button onClick={() => navigate('/seller-dashboard')} className="bg-gradient-primary gap-2 w-full sm:w-auto">
+                Go to Seller Dashboard
+                <ArrowRight className="h-4 w-4" />
+              </Button>
+            ) : (
+              <>
+                <Button onClick={() => navigate('/orders')} variant="outline">
+                  View order history
+                </Button>
+                <Button onClick={() => navigate('/discover')} className="bg-gradient-primary gap-2">
+                  Continue shopping
+                  <ArrowRight className="h-4 w-4" />
+                </Button>
+              </>
+            )}
           </div>
         </div>
       </main>
