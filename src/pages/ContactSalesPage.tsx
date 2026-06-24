@@ -97,7 +97,7 @@ const ContactSalesPage = () => {
           <div className="flex flex-wrap gap-6">
             <div className="flex items-center gap-2 text-sm">
               <Mail className="h-4 w-4 text-primary" />
-              <a href="mailto:sales@tenga.com" className="text-primary hover:underline">
+              <a href="mailto:sales@tengavm.co.zw" className="text-primary hover:underline">
                 sales@tenga.com
               </a>
             </div>
